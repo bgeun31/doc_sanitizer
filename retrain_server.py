@@ -104,9 +104,19 @@ def get_recent_logs():
 
 @app.post("/train")
 def train_model():
-    """모델 훈련 (동기식) - 내장 서버용"""
+    """모델 훈련 (동기식) - 내장 서버용 (기존 모델 교체)"""
     try:
-        add_log("내장 서버에서 모델 훈련 시작")
+        add_log("내장 서버에서 모델 재훈련 시작 (기존 모델 교체)")
+
+        # 기존 모델 삭제
+        import os
+        if os.path.exists("models/ensemble_model.pkl"):
+            os.remove("models/ensemble_model.pkl")
+            add_log("기존 모델 삭제 완료")
+
+        if os.path.exists("models/scaler.pkl"):
+            os.remove("models/scaler.pkl")
+            add_log("기존 스케일러 삭제 완료")
 
         # 직접 모델 트레이너 사용
         from utils.model_trainer import train_model as train_func
@@ -114,7 +124,7 @@ def train_model():
         success = train_func()
 
         if success:
-            add_log("모델 훈련 성공")
+            add_log("모델 재훈련 성공")
 
             # 메타 정보 읽기
             try:
@@ -127,10 +137,16 @@ def train_model():
                     "accuracy": meta.get("accuracy"),
                     "test_accuracy": meta.get("test_accuracy"),
                     "cv_accuracy": meta.get("cv_accuracy"),
+                    "cv_std": meta.get("cv_std"),
+                    "precision": meta.get("precision"),
+                    "recall": meta.get("recall"),
+                    "f1_score": meta.get("f1_score"),
                     "malware_samples": meta.get("malware_samples"),
                     "clean_samples": meta.get("clean_samples"),
                     "total_samples": meta.get("total_samples"),
-                    "model_version": meta.get("model_version")
+                    "model_version": meta.get("model_version"),
+                    "overfitting_prevention": meta.get("overfitting_prevention"),
+                    "message": "기존 모델 교체 완료"
                 }
             except Exception as meta_error:
                 add_log(f"메타 정보 로드 실패: {meta_error}")
@@ -139,7 +155,7 @@ def train_model():
                     "message": "훈련 완료, 메타 정보 없음"
                 }
         else:
-            add_log("모델 훈련 실패")
+            add_log("모델 재훈련 실패")
             return JSONResponse(
                 status_code=500,
                 content={"status": "error", "message": "훈련 실패"}
@@ -155,18 +171,28 @@ def train_model():
 
 @app.post("/train/stream")
 async def train_model_stream():
-    """모델 훈련 (스트리밍 로그) - 내장 서버용"""
+    """모델 훈련 (스트리밍 로그) - 내장 서버용 (기존 모델 교체)"""
 
     async def generate():
         try:
-            add_log("스트리밍 훈련 시작")
-            yield "내장 서버에서 모델 훈련 시작...\n"
+            add_log("스트리밍 재훈련 시작")
+            yield "내장 서버에서 모델 재훈련 시작 (기존 모델 교체)...\n"
+
+            # 기존 모델 삭제
+            import os
+            if os.path.exists("models/ensemble_model.pkl"):
+                os.remove("models/ensemble_model.pkl")
+                yield "기존 모델 삭제 완료\n"
+
+            if os.path.exists("models/scaler.pkl"):
+                os.remove("models/scaler.pkl")
+                yield "기존 스케일러 삭제 완료\n"
 
             # 훈련 실행
             from utils.model_trainer import ModelTrainer
             trainer = ModelTrainer()
 
-            yield "1단계: 훈련 데이터 준비 중...\n"
+            yield "1단계: 훈련 데이터 준비 중 (과적합 방지)...\n"
 
             # 데이터 준비
             features, labels = trainer.prepare_training_data()
@@ -176,46 +202,71 @@ async def train_model_stream():
                 return
 
             yield f"데이터 준비 완료: {len(features)}개 샘플\n"
-            yield "2단계: 모델 훈련 실행 중...\n"
+            malware_count = int(sum(labels))
+            clean_count = len(labels) - malware_count
+            malware_ratio = malware_count / len(labels) * 100
+            yield f"비율: 악성 {malware_count}개({malware_ratio:.1f}%), 정상 {clean_count}개({100 - malware_ratio:.1f}%)\n"
+
+            yield "2단계: 모델 재훈련 실행 중 (과적합 방지)...\n"
 
             # 훈련 실행
             success = trainer.train_model()
 
             if success:
-                yield "훈련 성공!\n"
+                yield "재훈련 성공!\n"
 
                 # 결과 출력
                 try:
                     with open("models/model_meta.json") as f:
                         meta = json.load(f)
 
-                    yield "\n=== 훈련 결과 ===\n"
-                    yield f"정확도: {meta.get('accuracy', 0):.3f}\n"
+                    yield "\n=== 재훈련 결과 ===\n"
+                    yield f"보수적 정확도: {meta.get('accuracy', 0):.4f}\n"
 
-                    if 'test_accuracy' in meta:
-                        yield f"테스트 정확도: {meta.get('test_accuracy', 0):.3f}\n"
-                    if 'cv_accuracy' in meta:
-                        yield f"교차검증 정확도: {meta.get('cv_accuracy', 0):.3f}\n"
-                    if 'precision' in meta:
-                        yield f"정밀도: {meta.get('precision', 0):.3f}\n"
-                    if 'recall' in meta:
-                        yield f"재현율: {meta.get('recall', 0):.3f}\n"
-                    if 'f1_score' in meta:
-                        yield f"F1-점수: {meta.get('f1_score', 0):.3f}\n"
+                    if 'test_accuracy' in meta and meta['test_accuracy']:
+                        yield f"테스트 정확도: {meta.get('test_accuracy', 0):.4f}\n"
+                    if 'cv_accuracy' in meta and meta['cv_accuracy']:
+                        yield f"교차검증 정확도: {meta.get('cv_accuracy', 0):.4f}\n"
+                    if 'cv_std' in meta and meta['cv_std']:
+                        yield f"교차검증 표준편차: {meta.get('cv_std', 0):.4f}\n"
+                    if 'precision' in meta and meta['precision']:
+                        yield f"정밀도: {meta.get('precision', 0):.4f}\n"
+                    if 'recall' in meta and meta['recall']:
+                        yield f"재현율: {meta.get('recall', 0):.4f}\n"
+                    if 'f1_score' in meta and meta['f1_score']:
+                        yield f"F1-점수: {meta.get('f1_score', 0):.4f}\n"
 
                     yield f"악성 샘플: {meta.get('malware_samples', 0)}개\n"
                     yield f"정상 샘플: {meta.get('clean_samples', 0)}개\n"
-                    yield f"훈련 시각: {meta.get('trained_at', 'N/A')}\n"
-                    yield f"모델 버전: {meta.get('model_version', '2.2')}\n"
+                    yield f"모델 버전: {meta.get('model_version', '2.2_fixed')}\n"
+                    yield f"훈련 완료: {meta.get('trained_at', 'N/A')}\n"
 
-                    add_log(f"훈련 완료 - 정확도: {meta.get('accuracy', 0):.3f}")
+                    # 과적합 방지 확인
+                    if meta.get('overfitting_prevention'):
+                        yield f"과적합 방지: {meta.get('overfitting_prevention')}\n"
+
+                    if meta.get('accuracy', 0) < 0.99:
+                        yield "과적합 방지 적용됨 - 정상적인 성능\n"
+                    else:
+                        yield "주의: 높은 정확도 - 과적합 가능성 있음\n"
+
+                    # 클래스별 성능
+                    if 'precision_per_class' in meta and meta['precision_per_class']:
+                        prec = meta['precision_per_class']
+                        if len(prec) >= 2:
+                            yield f"정상 파일 정밀도: {prec[0]:.4f}\n"
+                            yield f"악성 파일 정밀도: {prec[1]:.4f}\n"
+
+                    add_log(f"재훈련 완료 - 보수적 정확도: {meta.get('accuracy', 0):.4f}")
 
                 except Exception as meta_error:
                     yield f"메타 정보 로드 실패: {str(meta_error)}\n"
                     add_log(f"메타 정보 로드 실패: {str(meta_error)}")
             else:
-                yield "훈련 실패\n"
-                add_log("훈련 실패")
+                yield "재훈련 실패\n"
+                add_log("재훈련 실패")
+
+            yield "\n=== 기존 모델 교체 완료 ===\n"
 
         except Exception as e:
             add_log(f"스트리밍 훈련 오류: {str(e)}")

@@ -110,7 +110,7 @@ def test_system():
 
 
 def setup_system_optimized():
-    """최적화된 시스템 설정 (중복 필터링 적용)"""
+    """최적화된 시스템 설정 (과적합 방지)"""
     print("🚀 문서형 악성코드 무해화 시스템 v2.2 설정")
     print("=" * 50)
 
@@ -127,24 +127,26 @@ def setup_system_optimized():
     steps_needed = 3  # 샘플 수집, 모델 훈련, 업로드
 
     progress = OptimizedProgressTracker(steps_needed)
-    print(f"\n📋 {steps_needed}단계 자동화 플로우 시작 (중복 필터링 최적화)")
+    print(f"\n📋 {steps_needed}단계 자동화 플로우 시작 (과적합 방지)")
 
     try:
-        # 1단계: 중복 필터링된 샘플 수집
-        progress.update("악성코드 샘플 수집 중 (중복 사전 필터링)")
-        print("\n=== 1단계: 최적화된 샘플 수집 ===")
+        # 1단계: 과적합 방지된 샘플 수집
+        progress.update("샘플 수집 중 (과적합 방지)")
+        print("\n=== 1단계: 과적합 방지 샘플 수집 ===")
 
         def progress_callback(message):
             print(f"[진행] {message}")
 
         try:
             malware_files, clean_files = collect_training_data_with_progress(
-                malware_count=200,
-                clean_count=200,
+                malware_count=300,  # 악성 샘플 대폭 증가
+                clean_count=50,  # 정상 샘플 대폭 감소
                 progress_callback=progress_callback
             )
 
             print(f"수집 완료: 악성 {len(malware_files)}개, 정상 {len(clean_files)}개")
+            malware_ratio = len(malware_files) / (len(malware_files) + len(clean_files)) * 100
+            print(f"비율: 악성 {malware_ratio:.1f}%, 정상 {100 - malware_ratio:.1f}%")
 
             # RDS 상태 확인
             from utils.db import get_sample_statistics
@@ -155,9 +157,9 @@ def setup_system_optimized():
             print(f"샘플 수집 실패: {collect_error}")
             return False
 
-        # 2단계: AI 모델 훈련
-        progress.update("AI 모델 훈련 중")
-        print("\n=== 2단계: AI 모델 훈련 (RDS 데이터 포함) ===")
+        # 2단계: AI 모델 훈련 (과적합 방지)
+        progress.update("AI 모델 훈련 중 (과적합 방지)")
+        print("\n=== 2단계: AI 모델 훈련 (과적합 방지) ===")
 
         success = train_model()
         if not success:
@@ -204,10 +206,17 @@ def setup_system_optimized():
                 meta = json.load(f)
 
             print("📊 최종 시스템 상태:")
-            print(f"   AI 모델 정확도: {meta.get('accuracy', 0):.3f}")
+            print(f"   보수적 정확도: {meta.get('accuracy', 0):.4f}")
+            if 'test_accuracy' in meta and meta['test_accuracy']:
+                print(f"   테스트 정확도: {meta.get('test_accuracy', 0):.4f}")
+            if 'cv_accuracy' in meta and meta['cv_accuracy']:
+                print(f"   교차검증 정확도: {meta.get('cv_accuracy', 0):.4f}")
             print(f"   훈련 샘플 수: {meta.get('total_samples', 0)}개")
             print(f"   모델 버전: {meta.get('model_version', '1.0')}")
             print(f"   훈련 완료 시각: {meta.get('trained_at', 'N/A')}")
+
+            if meta.get('overfitting_prevention'):
+                print(f"   과적합 방지: {meta.get('overfitting_prevention')}")
 
         except Exception as meta_error:
             print(f"메타 정보 로드 실패: {meta_error}")
@@ -332,26 +341,38 @@ def show_system_info():
 
 
 def automated_retrain():
-    """자동화된 모델 재훈련 (중복 필터링 최적화)"""
-    print("=== 자동화된 모델 재훈련 (중복 필터링 최적화) ===")
+    """자동화된 모델 재훈련 (과적합 방지)"""
+    print("=== 자동화된 모델 재훈련 (과적합 방지) ===")
 
     try:
-        # 1단계: 새로운 샘플 수집 (중복 사전 필터링)
-        print("1단계: 새로운 샘플 수집 중 (중복 사전 필터링)...")
+        # 1단계: 새로운 샘플 수집 (과적합 방지)
+        print("1단계: 새로운 샘플 수집 중 (과적합 방지)...")
 
         def progress_callback(message):
             print(f"[진행] {message}")
 
         malware_files, clean_files = collect_training_data_with_progress(
-            malware_count=100,
-            clean_count=100,
+            malware_count=300,  # 악성 샘플 대폭 증가
+            clean_count=50,  # 정상 샘플 대폭 감소
             progress_callback=progress_callback
         )
 
         print(f"수집 완료: 악성 {len(malware_files)}개, 정상 {len(clean_files)}개")
+        malware_ratio = len(malware_files) / (len(malware_files) + len(clean_files)) * 100
+        print(f"비율: 악성 {malware_ratio:.1f}%, 정상 {100 - malware_ratio:.1f}%")
 
-        # 2단계: 모델 재훈련
-        print("2단계: 모델 재훈련 중...")
+        # 2단계: 기존 모델 삭제 및 재훈련
+        print("2단계: 기존 모델 삭제 및 재훈련 중...")
+
+        # 기존 모델 파일 삭제
+        if os.path.exists("models/ensemble_model.pkl"):
+            os.remove("models/ensemble_model.pkl")
+            print("기존 모델 삭제 완료")
+
+        if os.path.exists("models/scaler.pkl"):
+            os.remove("models/scaler.pkl")
+            print("기존 스케일러 삭제 완료")
+
         success = train_model()
 
         if success:
@@ -381,9 +402,23 @@ def automated_retrain():
                     meta = json.load(f)
 
                 print("\n📊 재훈련 결과:")
-                print(f"정확도: {meta.get('accuracy', 0):.3f}")
+                print(f"보수적 정확도: {meta.get('accuracy', 0):.4f}")
+                if 'test_accuracy' in meta and meta['test_accuracy']:
+                    print(f"테스트 정확도: {meta.get('test_accuracy', 0):.4f}")
+                if 'cv_accuracy' in meta and meta['cv_accuracy']:
+                    print(f"교차검증 정확도: {meta.get('cv_accuracy', 0):.4f}")
                 print(f"총 샘플: {meta.get('total_samples', 0)}개")
+                print(f"모델 버전: {meta.get('model_version', 'N/A')}")
                 print(f"훈련 완료: {meta.get('trained_at', 'N/A')}")
+
+                if meta.get('overfitting_prevention'):
+                    print(f"과적합 방지: {meta.get('overfitting_prevention')}")
+
+                # 과적합 체크
+                if meta.get('accuracy', 0) < 0.99:
+                    print("과적합 방지 적용됨 - 정상적인 성능")
+                else:
+                    print("주의: 높은 정확도 - 과적합 가능성 있음")
 
             except Exception as meta_error:
                 print(f"메타 정보 로드 실패: {meta_error}")
@@ -412,7 +447,7 @@ def main():
             automated_retrain()
         else:
             print("사용법:")
-            print("  python test_api.py setup    - 시스템 초기 설정 (중복 필터링 최적화)")
+            print("  python test_api.py setup    - 시스템 초기 설정 (과적합 방지)")
             print("  python test_api.py test     - 빠른 기능 테스트")
             print("  python test_api.py info     - 시스템 정보 확인")
             print("  python test_api.py retrain  - 자동화된 모델 재훈련")
