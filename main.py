@@ -811,12 +811,12 @@ class DocSanitizerApp:
             self.log_append(f"[서버] 정상 샘플 저장 실패: {e}")
 
     def retrain_model_locally(self):
-        """로컬 모델 재훈련 (기존 모델 완전 교체)"""
+        """로컬 모델 재훈련 (서버 없이)"""
 
         def training_thread():
             try:
-                self.model_log_append("=== 모델 재훈련 시작 (기존 모델 교체) ===")
-                self.model_log_append("1단계: 새로운 샘플 수집 중 (과적합 방지)...")
+                self.model_log_append("=== 로컬 모델 재훈련 시작 ===")
+                self.model_log_append("1단계: 새로운 악성코드 샘플 수집 중...")
 
                 # 샘플 수집
                 from utils.api_client import collect_training_data_with_progress
@@ -827,43 +827,26 @@ class DocSanitizerApp:
 
                 try:
                     malware_files, clean_files = collect_training_data_with_progress(
-                        malware_count=300,  # 악성 샘플 대폭 증가
-                        clean_count=50,  # 정상 샘플 대폭 감소
+                        malware_count=200,  # 악성 샘플 증가
+                        clean_count=120,  # 정상 샘플 감소
                         progress_callback=progress_callback
                     )
 
                     self.model_log_append(f"수집 완료: 악성 {len(malware_files)}개, 정상 {len(clean_files)}개")
-                    malware_ratio = len(malware_files) / (len(malware_files) + len(clean_files)) * 100
-                    self.model_log_append(f"비율: 악성 {malware_ratio:.1f}%, 정상 {100 - malware_ratio:.1f}%")
 
                 except Exception as collect_error:
                     self.model_log_append(f"샘플 수집 실패: {collect_error}")
                     return
 
-                self.model_log_append("2단계: 기존 모델 삭제 및 재훈련...")
+                self.model_log_append("2단계: AI 모델 훈련 중...")
 
-                # 기존 모델 완전 교체
+                # 로컬 훈련 실행
                 from utils.model_trainer import ModelTrainer
                 trainer = ModelTrainer()
-
-                # 기존 모델 삭제
-                if os.path.exists("models/ensemble_model.pkl"):
-                    os.remove("models/ensemble_model.pkl")
-                    self.model_log_append("기존 모델 삭제 완료")
-
-                if os.path.exists("models/scaler.pkl"):
-                    os.remove("models/scaler.pkl")
-                    self.model_log_append("기존 스케일러 삭제 완료")
-
-                # 모델 매니저 초기화
-                self.model_manager.model_loaded = False
-                self.model_manager.trainer.ensemble_model = None
-
-                # 완전 재훈련
                 success = trainer.train_model()
 
                 if success:
-                    self.model_log_append("모델 재훈련 성공!")
+                    self.model_log_append("로컬 모델 훈련 성공!")
 
                     # 훈련 결과 표시
                     try:
@@ -871,45 +854,25 @@ class DocSanitizerApp:
                         with open("models/model_meta.json") as f:
                             meta = json.load(f)
 
-                        self.model_log_append("--- 재훈련 결과 ---")
-                        self.model_log_append(f"보수적 정확도: {meta.get('accuracy', 0):.4f}")
-                        if 'test_accuracy' in meta and meta['test_accuracy']:
-                            self.model_log_append(f"테스트 정확도: {meta.get('test_accuracy', 0):.4f}")
-                        if 'cv_accuracy' in meta and meta['cv_accuracy']:
-                            self.model_log_append(f"교차검증 정확도: {meta.get('cv_accuracy', 0):.4f}")
-                        if 'precision' in meta and meta['precision']:
-                            self.model_log_append(f"정밀도: {meta.get('precision', 0):.4f}")
-                        if 'recall' in meta and meta['recall']:
-                            self.model_log_append(f"재현율: {meta.get('recall', 0):.4f}")
-                        if 'f1_score' in meta and meta['f1_score']:
-                            self.model_log_append(f"F1-점수: {meta.get('f1_score', 0):.4f}")
-
+                        self.model_log_append("--- 훈련 결과 ---")
+                        self.model_log_append(f"정확도: {meta.get('accuracy', 0):.3f}")
+                        if 'test_accuracy' in meta:
+                            self.model_log_append(f"테스트 정확도: {meta.get('test_accuracy', 0):.3f}")
+                        if 'cv_accuracy' in meta:
+                            self.model_log_append(f"CV 정확도: {meta.get('cv_accuracy', 0):.3f}")
                         self.model_log_append(f"악성 샘플: {meta.get('malware_samples', 0)}개")
                         self.model_log_append(f"정상 샘플: {meta.get('clean_samples', 0)}개")
-                        self.model_log_append(f"모델 버전: {meta.get('model_version', 'N/A')}")
-                        self.model_log_append(f"훈련 완료: {meta.get('trained_at', 'N/A')}")
+                        self.model_log_append(f"훈련 시각: {meta.get('trained_at', 'N/A')}")
 
                         # 클래스별 성능 정보
-                        if 'precision_per_class' in meta and meta['precision_per_class']:
+                        if 'precision_per_class' in meta:
                             prec = meta['precision_per_class']
                             if len(prec) >= 2:
-                                self.model_log_append(f"정상 파일 정밀도: {prec[0]:.4f}")
-                                self.model_log_append(f"악성 파일 정밀도: {prec[1]:.4f}")
-
-                        # 과적합 방지 확인
-                        if meta.get('accuracy', 0) < 0.99:
-                            self.model_log_append("과적합 방지 적용됨 - 정상적인 성능")
-                        else:
-                            self.model_log_append("주의: 높은 정확도 - 과적합 가능성 있음")
+                                self.model_log_append(f"정상 파일 정밀도: {prec[0]:.3f}")
+                                self.model_log_append(f"악성 파일 정밀도: {prec[1]:.3f}")
 
                     except Exception as meta_error:
                         self.model_log_append(f"메타 정보 로드 실패: {meta_error}")
-
-                    # 새 모델 로드
-                    if self.model_manager.load_model():
-                        self.model_log_append("새 모델 로드 완료")
-                    else:
-                        self.model_log_append("새 모델 로드 실패")
 
                     # AWS 업로드
                     if config.USE_AWS:
@@ -925,13 +888,13 @@ class DocSanitizerApp:
                             for local_path, s3_key in upload_files:
                                 if os.path.exists(local_path):
                                     if aws_helper.upload(local_path, s3_key):
-                                        self.model_log_append(f"서버 업로드 완료: {s3_key}")
+                                        self.model_log_append(f"업로드 완료: {s3_key}")
 
                         except Exception as aws_error:
                             self.model_log_append(f"AWS 업로드 실패: {aws_error}")
 
                 else:
-                    self.model_log_append("모델 재훈련 실패")
+                    self.model_log_append("로컬 모델 훈련 실패")
 
                 self.model_log_append("=== 모델 재훈련 완료 ===")
                 self.update_model_status()

@@ -1,4 +1,4 @@
-# utils/api_client.py - 정상 샘플 수집 제한 및 악성 샘플 증가
+# utils/api_client.py - 개선된 샘플 수집 (정상 샘플 VirusTotal 검증 포함)
 
 import os
 import requests
@@ -76,20 +76,19 @@ class APIClient:
         except:
             return False
 
-    def collect_malware_samples_malware_bazaar(self, count: int = 200) -> List[str]:
-        """MalwareBazaar에서 악성 샘플 수집 (증가)"""
+    def collect_malware_samples_malware_bazaar(self, count: int = 150) -> List[str]:
+        """MalwareBazaar에서 악성 샘플 수집"""
         if not self.malware_bazaar_key:
             print("[MB] API 키가 없습니다")
             return []
 
         collected_files = []
 
-        # 문서형 악성코드 태그 확장
+        # 문서형 악성코드 태그 (더 많은 유형 포함)
         document_tags = [
             'doc', 'docx', 'pdf', 'xls', 'xlsx', 'ppt', 'pptx',
             'emotet', 'trickbot', 'qakbot', 'formbook', 'agent-tesla',
-            'lokibot', 'macro', 'office', 'document', 'banker',
-            'downloader', 'dropper', 'loader', 'malware'
+            'lokibot', 'macro', 'office', 'document'
         ]
 
         for tag in document_tags:
@@ -102,7 +101,7 @@ class APIClient:
                 data = {
                     'query': 'get_taginfo',
                     'tag': tag,
-                    'limit': 25,  # 증가
+                    'limit': 20,
                     'api_key': self.malware_bazaar_key
                 }
 
@@ -123,6 +122,7 @@ class APIClient:
                         file_name = sample.get('file_name', '')
                         file_ext = os.path.splitext(file_name)[1].lower()
 
+                        # 지원하는 문서 형식만 수집
                         if file_ext in ['.doc', '.docx', '.docm', '.pdf', '.xls', '.xlsx', '.xlsm', '.ppt', '.pptx',
                                         '.pptm', '.hwp']:
                             download_url = sample.get('urlhaus_download')
@@ -133,12 +133,13 @@ class APIClient:
                                 if file_path:
                                     collected_files.append(file_path)
 
+                                    # RDS에 메타데이터 저장
                                     self._save_sample_metadata(
                                         file_path, sha256_hash, True, 'malware_bazaar',
                                         sample.get('signature'), 'malware'
                                     )
 
-                time.sleep(1)
+                time.sleep(1)  # API 제한 준수
 
             except Exception as e:
                 print(f"[MB] {tag} 수집 오류: {e}")
@@ -147,8 +148,8 @@ class APIClient:
         print(f"[MB] 총 {len(collected_files)}개 악성 샘플 수집 완료")
         return collected_files
 
-    def collect_malware_samples_triage(self, count: int = 150) -> List[str]:
-        """Tria.ge에서 악성 샘플 수집 (증가)"""
+    def collect_malware_samples_triage(self, count: int = 100) -> List[str]:
+        """Tria.ge에서 악성 샘플 수집 (개수 증가)"""
         if not self.triage_key:
             print("[Triage] API 키가 없습니다")
             return []
@@ -156,7 +157,7 @@ class APIClient:
         collected_files = []
         headers = {'Authorization': f'Bearer {self.triage_key}'}
 
-        # 문서형 악성코드 쿼리 확장
+        # 문서형 악성코드 쿼리 (더 포괄적)
         queries = [
             'kind:document AND family:emotet',
             'kind:document AND family:trickbot',
@@ -168,10 +169,7 @@ class APIClient:
             'tag:office AND kind:document',
             'ext:pdf AND kind:document',
             'ext:docx AND kind:document',
-            'ext:xlsx AND kind:document',
-            'tag:banker AND ext:docx',
-            'tag:downloader AND ext:pdf',
-            'tag:trojan AND ext:xlsx'
+            'ext:xlsx AND kind:document'
         ]
 
         for query in queries:
@@ -183,7 +181,7 @@ class APIClient:
             try:
                 params = {
                     'query': query,
-                    'limit': 20,  # 증가
+                    'limit': 15,  # 각 쿼리당 더 많이 수집
                     'subset': 'public'
                 }
 
@@ -212,15 +210,17 @@ class APIClient:
                             if file_path:
                                 collected_files.append(file_path)
 
+                                # 해시 계산
                                 with open(file_path, 'rb') as f:
                                     file_hash = hashlib.sha256(f.read()).hexdigest()
 
+                                # RDS에 메타데이터 저장
                                 self._save_sample_metadata(
                                     file_path, file_hash, True, 'triage',
                                     sample.get('family'), 'malware'
                                 )
 
-                time.sleep(2)
+                time.sleep(2)  # API 제한 준수
 
             except Exception as e:
                 print(f"[Triage] 쿼리 오류: {e}")
@@ -229,19 +229,20 @@ class APIClient:
         print(f"[Triage] 총 {len(collected_files)}개 악성 샘플 수집 완료")
         return collected_files
 
-    def collect_clean_samples_verified(self, count: int = 30) -> List[str]:
-        """VirusTotal 검증된 정상 샘플 수집 (대폭 감소)"""
+    def collect_clean_samples_verified(self, count: int = 80) -> List[str]:
+        """VirusTotal 검증된 정상 샘플 수집"""
         if not self.virustotal_key:
-            print("[Clean] VirusTotal API 키가 없어 최소 로컬 샘플만 사용")
-            return self._generate_minimal_clean_samples(min(count, 10))
+            print("[Clean] VirusTotal API 키가 없어 로컬 샘플만 사용")
+            return self._generate_minimal_clean_samples(count // 4)  # 매우 적게만 생성
 
         collected_files = []
         headers = {'x-apikey': self.virustotal_key}
 
-        # 제한적인 정상 문서 검색
+        # 일반적인 정상 문서 검색 쿼리
         search_queries = [
-            'type:pdf positives:0 size:100KB+ fs:2024-01-01+',
-            'type:office positives:0 size:50KB+ fs:2024-01-01+'
+            'type:pdf positives:0 size:100KB+ fs:2023-01-01+',
+            'type:office positives:0 size:50KB+ fs:2023-01-01+',
+            'type:document positives:0 engines:20+ fs:2023-01-01+'
         ]
 
         for query in search_queries:
@@ -253,7 +254,7 @@ class APIClient:
             try:
                 params = {
                     'query': query,
-                    'limit': 15  # 대폭 감소
+                    'limit': 30
                 }
 
                 response = requests.get(
@@ -274,10 +275,10 @@ class APIClient:
                         attributes = file_info.get('attributes', {})
                         stats = attributes.get('last_analysis_stats', {})
 
-                        # 매우 엄격한 정상 파일 선택
+                        # 정말 깨끗한 파일만 선택 (악성 탐지 0개)
                         if (stats.get('malicious', 0) == 0 and
                                 stats.get('suspicious', 0) == 0 and
-                                sum(stats.values()) >= 20):  # 20개 이상 엔진 검사
+                                sum(stats.values()) >= 15):  # 충분한 엔진에서 검사됨
 
                             file_hash = file_info.get('id')
                             file_names = attributes.get('names', [])
@@ -286,29 +287,32 @@ class APIClient:
                                 file_name = file_names[0]
                                 file_ext = os.path.splitext(file_name)[1].lower()
 
-                                if file_ext in ['.pdf', '.docx']:  # PDF와 Word만
+                                if file_ext in ['.pdf', '.docx', '.xlsx', '.pptx']:
+                                    # 파일 다운로드는 VirusTotal에서 직접 불가능하므로
+                                    # 대신 해당 정보를 바탕으로 유사한 정상 파일 생성
                                     file_path = self._create_verified_clean_sample(file_name, file_ext)
                                     if file_path:
                                         collected_files.append(file_path)
 
+                                        # RDS에 메타데이터 저장
                                         self._save_sample_metadata(
                                             file_path, file_hash, False, 'virustotal_verified',
                                             'clean_document', 'clean'
                                         )
 
-                time.sleep(1.5)
+                time.sleep(1)  # API 제한 준수
 
             except Exception as e:
                 print(f"[Clean] VirusTotal 검색 오류: {e}")
                 continue
 
-        # 부족한 경우 최소한의 로컬 생성
+        # 부족한 경우 최소한의 로컬 생성으로 보완
         if len(collected_files) < count:
-            remaining = min(count - len(collected_files), 10)
+            remaining = min(count - len(collected_files), 20)  # 최대 20개만 로컬 생성
             local_files = self._generate_minimal_clean_samples(remaining)
             collected_files.extend(local_files)
 
-        print(f"[Clean] 총 {len(collected_files)}개 정상 샘플 수집 완료 (엄격 제한)")
+        print(f"[Clean] 총 {len(collected_files)}개 정상 샘플 수집 완료")
         return collected_files
 
     def _create_verified_clean_sample(self, filename: str, file_ext: str) -> str:
@@ -327,14 +331,24 @@ class APIClient:
                 c.drawString(100, 650, f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}")
                 c.save()
 
-            elif file_ext == '.docx':
+            elif file_ext in ['.docx', '.xlsx', '.pptx']:
                 import zipfile
+                from xml.etree.ElementTree import Element, SubElement, tostring
 
                 with zipfile.ZipFile(file_path, 'w') as zf:
-                    zf.writestr('[Content_Types].xml', self._get_content_types_xml())
+                    # 기본 Office 구조 생성
+                    zf.writestr('[Content_Types].xml', self._get_content_types_xml(file_ext))
                     zf.writestr('_rels/.rels', self._get_rels_xml())
-                    zf.writestr('word/document.xml', self._get_word_document_xml(filename))
-                    zf.writestr('word/_rels/document.xml.rels', self._get_word_rels_xml())
+
+                    if file_ext == '.docx':
+                        zf.writestr('word/document.xml', self._get_word_document_xml(filename))
+                        zf.writestr('word/_rels/document.xml.rels', self._get_word_rels_xml())
+                    elif file_ext == '.xlsx':
+                        zf.writestr('xl/workbook.xml', self._get_excel_workbook_xml())
+                        zf.writestr('xl/worksheets/sheet1.xml', self._get_excel_sheet_xml(filename))
+                    elif file_ext == '.pptx':
+                        zf.writestr('ppt/presentation.xml', self._get_ppt_presentation_xml())
+                        zf.writestr('ppt/slides/slide1.xml', self._get_ppt_slide_xml(filename))
 
             return file_path
 
@@ -343,9 +357,9 @@ class APIClient:
             return None
 
     def _generate_minimal_clean_samples(self, count: int) -> List[str]:
-        """최소한의 로컬 정상 샘플 생성 (극도로 제한)"""
-        if count > 5:  # 최대 5개로 제한
-            count = 5
+        """최소한의 로컬 정상 샘플 생성 (매우 제한적)"""
+        if count > 10:  # 최대 10개로 제한
+            count = 10
 
         generated_files = []
 
@@ -353,6 +367,7 @@ class APIClient:
             os.makedirs(config.DIRECTORIES['clean_samples'], exist_ok=True)
 
             for i in range(count):
+                # PDF만 생성 (가장 안전)
                 filename = f"local_clean_{i + 1}_{int(time.time())}.pdf"
                 file_path = os.path.join(config.DIRECTORIES['clean_samples'], filename)
 
@@ -365,6 +380,7 @@ class APIClient:
 
                 generated_files.append(file_path)
 
+                # 메타데이터 저장
                 with open(file_path, 'rb') as f:
                     file_hash = hashlib.sha256(f.read()).hexdigest()
 
@@ -376,12 +392,20 @@ class APIClient:
         except Exception as e:
             print(f"[Clean] 로컬 생성 오류: {e}")
 
-        print(f"[Clean] {len(generated_files)}개 로컬 정상 샘플 생성 (극소량)")
+        print(f"[Clean] {len(generated_files)}개 로컬 정상 샘플 생성")
         return generated_files
 
-    def _get_content_types_xml(self) -> str:
+    def _get_content_types_xml(self, file_ext: str) -> str:
         """Office 문서 Content Types XML 생성"""
-        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'
+        base = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+
+        if file_ext == '.docx':
+            base += '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            base += '<Default Extension="xml" ContentType="application/xml"/>'
+            base += '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+
+        base += '</Types>'
+        return base
 
     def _get_rels_xml(self) -> str:
         """기본 관계 XML 생성"""
@@ -394,6 +418,22 @@ class APIClient:
     def _get_word_rels_xml(self) -> str:
         """Word 관계 XML 생성"""
         return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>'
+
+    def _get_excel_workbook_xml(self) -> str:
+        """Excel 워크북 XML 생성"""
+        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>'
+
+    def _get_excel_sheet_xml(self, filename: str) -> str:
+        """Excel 시트 XML 생성"""
+        return f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Clean Spreadsheet: {filename}</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>This is a verified clean spreadsheet.</t></is></c></row></sheetData></worksheet>'
+
+    def _get_ppt_presentation_xml(self) -> str:
+        """PowerPoint 프레젠테이션 XML 생성"""
+        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:sldMasterIdLst/><p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst></p:presentation>'
+
+    def _get_ppt_slide_xml(self, filename: str) -> str:
+        """PowerPoint 슬라이드 XML 생성"""
+        return f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>Clean Presentation: {filename}</a:t></a:r></a:p><a:p><a:r><a:t>This is a verified clean presentation.</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>'
 
     def _download_sample(self, url: str, file_hash: str, file_ext: str) -> str:
         """샘플 파일 다운로드"""
@@ -445,10 +485,12 @@ class APIClient:
                               source: str, malware_family: str = None, threat_category: str = None):
         """샘플 메타데이터를 RDS에 저장"""
         try:
+            # S3 업로드
             s3_key = None
             if config.USE_AWS:
                 s3_key = aws_helper.upload_virus_sample(file_path, file_hash)
 
+            # RDS에 저장
             db.save_virus_sample(
                 file_path=file_path,
                 file_hash=file_hash,
@@ -468,9 +510,11 @@ class APIClient:
             return {"error": "VirusTotal API 키가 설정되지 않음"}
 
         try:
+            # 파일 해시 계산
             with open(file_path, 'rb') as f:
                 file_hash = hashlib.sha256(f.read()).hexdigest()
 
+            # 기존 검사 결과 조회
             headers = {'x-apikey': self.virustotal_key}
             response = requests.get(
                 f'https://www.virustotal.com/api/v3/files/{file_hash}',
@@ -501,9 +545,9 @@ class APIClient:
             return {"error": f"VirusTotal 검사 오류: {str(e)}"}
 
 
-def collect_training_data_with_progress(malware_count: int = 300, clean_count: int = 50,
+def collect_training_data_with_progress(malware_count: int = 200, clean_count: int = 100,
                                         progress_callback=None) -> Tuple[List[str], List[str]]:
-    """개선된 훈련 데이터 수집 (악성:정상 = 6:1 비율)"""
+    """개선된 훈련 데이터 수집 (정상 샘플 비율 감소)"""
 
     def progress(msg):
         if progress_callback:
@@ -515,6 +559,7 @@ def collect_training_data_with_progress(malware_count: int = 300, clean_count: i
 
     progress("API 연결 상태 확인 중...")
 
+    # API 상태 확인
     mb_available = client.test_malware_bazaar_connection()
     vt_available = client.test_virustotal_connection()
     triage_available = client.test_triage_connection()
@@ -526,10 +571,10 @@ def collect_training_data_with_progress(malware_count: int = 300, clean_count: i
     malware_files = []
     clean_files = []
 
-    # 악성 샘플 수집 (대폭 증가)
+    # 악성 샘플 수집 (비율 증가)
     if mb_available:
         progress("MalwareBazaar에서 악성 샘플 수집 중...")
-        mb_files = client.collect_malware_samples_malware_bazaar(malware_count * 60 // 100)
+        mb_files = client.collect_malware_samples_malware_bazaar(malware_count * 60 // 100)  # 60%
         malware_files.extend(mb_files)
 
     if triage_available:
@@ -539,26 +584,27 @@ def collect_training_data_with_progress(malware_count: int = 300, clean_count: i
             triage_files = client.collect_malware_samples_triage(remaining_malware)
             malware_files.extend(triage_files)
 
-    # 정상 샘플 수집 (대폭 감소)
+    # 정상 샘플 수집 (비율 감소, 검증 강화)
     if vt_available:
-        progress("VirusTotal 검증된 정상 샘플 수집 중 (극소량)...")
+        progress("VirusTotal 검증된 정상 샘플 수집 중...")
         clean_files = client.collect_clean_samples_verified(clean_count)
     else:
-        progress("VirusTotal 없음 - 최소 로컬 정상 샘플 생성...")
-        clean_files = client._generate_minimal_clean_samples(min(clean_count, 5))
+        progress("VirusTotal 없음 - 최소한의 로컬 정상 샘플 생성...")
+        clean_files = client._generate_minimal_clean_samples(min(clean_count, 15))
 
     # 중복 제거
     progress("중복 파일 제거 중...")
     malware_files = remove_duplicates(malware_files)
     clean_files = remove_duplicates(clean_files)
 
-    # 엄격한 비율 조정 (악성:정상 = 6:1)
-    if len(clean_files) > len(malware_files) // 6:
-        clean_files = clean_files[:max(len(malware_files) // 6, 5)]
-        progress(f"정상 샘플 수를 {len(clean_files)}개로 엄격 제한 (악성 대비 1/6)")
+    # 비율 조정 (악성 > 정상)
+    if len(clean_files) > len(malware_files) * 0.7:  # 정상 샘플이 악성의 70%를 초과하면
+        clean_files = clean_files[:int(len(malware_files) * 0.7)]
+        progress(f"정상 샘플 수를 {len(clean_files)}개로 조정 (악성 대비 70% 이하)")
 
     progress(f"수집 완료: 악성 {len(malware_files)}개, 정상 {len(clean_files)}개")
-    progress(f"비율: 악성 {len(malware_files) / (len(malware_files) + len(clean_files)) * 100:.1f}%, 정상 {len(clean_files) / (len(malware_files) + len(clean_files)) * 100:.1f}%")
+    progress(
+        f"비율: 악성 {len(malware_files) / (len(malware_files) + len(clean_files)) * 100:.1f}%, 정상 {len(clean_files) / (len(malware_files) + len(clean_files)) * 100:.1f}%")
 
     return malware_files, clean_files
 
@@ -577,6 +623,7 @@ def remove_duplicates(file_paths: List[str]) -> List[str]:
                 unique_files.append(file_path)
                 seen_hashes.add(file_hash)
             else:
+                # 중복 파일 삭제
                 try:
                     os.remove(file_path)
                 except:
@@ -589,6 +636,7 @@ def remove_duplicates(file_paths: List[str]) -> List[str]:
 
 
 if __name__ == "__main__":
+    # 테스트 코드
     client = APIClient()
 
     print("=== API 연결 테스트 ===")
@@ -597,5 +645,5 @@ if __name__ == "__main__":
     print(f"Tria.ge: {client.test_triage_connection()}")
 
     print("\n=== 샘플 수집 테스트 ===")
-    malware_files, clean_files = collect_training_data_with_progress(100, 15)
+    malware_files, clean_files = collect_training_data_with_progress(50, 30)
     print(f"결과: 악성 {len(malware_files)}개, 정상 {len(clean_files)}개")
