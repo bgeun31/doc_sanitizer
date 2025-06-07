@@ -23,6 +23,3 @@ pymysql>=1.1
 # 서버
 uvicorn
 fastapi
-
-
-# 메인서버 A작업
