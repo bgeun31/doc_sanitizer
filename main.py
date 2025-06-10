@@ -1,4 +1,4 @@
-# main.py - VirusTotal 연동 수정 및 GUI 개선
+# main.py - GUI 레이아웃 가운데 정렬
 
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
@@ -249,14 +249,14 @@ class DocSanitizerApp:
         self.history_text.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
     def create_model_tab(self):
-        """모델 정보 탭 UI"""
+        """모델 정보 탭 UI (가운데 정렬 적용)"""
         # 모델 상태 프레임
         status_frame = ctk.CTkFrame(self.tab_model, corner_radius=10)
         status_frame.pack(fill="x", padx=20, pady=(15, 5))
 
         status_label = ctk.CTkLabel(status_frame, text="AI 모델 관리",
                                     font=ctk.CTkFont(size=18, weight="bold"))
-        status_label.pack(pady=(20, 10))
+        status_label.pack(pady=(10, 5))
 
         # 서버 연결 상태 표시
         self.server_status_label = ctk.CTkLabel(
@@ -267,9 +267,34 @@ class DocSanitizerApp:
         )
         self.server_status_label.pack(pady=(0, 10))
 
+        # <<< 변경된 부분 시작 (가운데 정렬을 위한 레이아웃 수정) >>>
+        # --- 샘플 수량 입력 UI ---
+        # pack()을 사용하여 가운데 정렬될 컨테이너 프레임
+        retrain_options_container = ctk.CTkFrame(status_frame, fg_color="transparent")
+        retrain_options_container.pack(pady=10)
+
+        # grid()를 사용하여 라벨과 입력창을 깔끔하게 정렬할 내부 프레임
+        retrain_options_grid = ctk.CTkFrame(retrain_options_container, fg_color="transparent")
+        retrain_options_grid.pack()
+
+        # 악성 샘플 입력
+        malware_label = ctk.CTkLabel(retrain_options_grid, text="악성 샘플 수:")
+        malware_label.grid(row=0, column=0, padx=(0, 10), pady=5, sticky="e")
+        self.malware_entry = ctk.CTkEntry(retrain_options_grid, width=150)
+        self.malware_entry.insert(0, "200")
+        self.malware_entry.grid(row=0, column=1, padx=(0, 20), pady=5)
+
+        # 정상 샘플 입력
+        clean_label = ctk.CTkLabel(retrain_options_grid, text="정상 샘플 수:")
+        clean_label.grid(row=1, column=0, padx=(0, 10), pady=5, sticky="e")
+        self.clean_entry = ctk.CTkEntry(retrain_options_grid, width=150)
+        self.clean_entry.insert(0, "120")
+        self.clean_entry.grid(row=1, column=1, padx=(0, 20), pady=5)
+
         # 버튼 컨테이너 (가운데 정렬용)
         btn_container = ctk.CTkFrame(status_frame, fg_color="transparent")
         btn_container.pack(pady=(10, 20))
+        # <<< 변경된 부분 끝 >>>
 
         self.info_btn = ctk.CTkButton(
             btn_container,
@@ -592,6 +617,15 @@ class DocSanitizerApp:
                     except Exception as e:
                         self.log_text.insert("end", f"[룰] 검사 오류: {str(e)}\n")
 
+                    malware_type_info = "분류 안됨"
+                    if is_suspicious:
+                        try:
+                            # MalwareClassifier를 사용해 악성코드 유형 분류
+                            malware_type_info = self.malware_classifier.classify_malware(file_path)
+                            self.log_text.insert("end", f"[분류] 악성코드 유형: {malware_type_info}\n")
+                        except Exception as classify_error:
+                            self.log_text.insert("end", f"[분류] 오류: {str(classify_error)}\n")
+
                     # VirusTotal 검증 (수정됨)
                     virustotal_result = None
                     final_verdict = "정상"
@@ -648,6 +682,8 @@ class DocSanitizerApp:
                         else:
                             self.log_text.insert("end", f"[최종] 주의 필요 ({final_verdict})\n")
                             self.history_text.insert("end", f"{file_name} ({final_verdict})\n")
+
+                        self.history_text.insert("end", f"  └ 분류: {malware_type_info}\n")
 
                         if ai_result and ai_result.get('prediction') == "악성":
                             self.history_text.insert("end", f"  └ AI: 악성 예측 ({ai_result.get('confidence', 0):.3f})\n")
@@ -706,40 +742,35 @@ class DocSanitizerApp:
                 if ext in (".docx", ".docm", ".xlsx", ".xlsm", ".pptx", ".pptm"):
                     clean_file, removed = remove_macro(file_path)
                     if removed:
-                        removed_elements.append("vbaProject.bin")
+                        removed_elements.append("vbaProject.bin (매크로)")
                         result_msg = "매크로 제거됨"
-                        self.log_append(f"[완료] 매크로 제거됨: → {os.path.basename(clean_file)}")
-                        self.history_append(f"{file_name}")
-                        self.history_append(f"  └ 제거: vbaProject.bin")
+                        self.log_append(f"[완료] 매크로 제거 완료: → {os.path.basename(clean_file)}")
+                        self.history_append(f"{file_name} -> [제거] 매크로 (vbaProject.bin)")
                     else:
-                        result_msg = "매크로 없음"
-                        self.log_append("[완료] 매크로 없음")
+                        result_msg = "제거할 매크로 없음"
+                        self.log_append("[완료] 제거할 매크로가 없습니다.")
 
                 elif ext == ".pdf":
                     clean_file, removed_keys = sanitize_pdf(file_path)
                     if removed_keys:
                         removed_elements.extend(removed_keys)
-                        result_msg = "JavaScript 제거됨"
-                        self.log_append(f"[완료] JavaScript 제거됨: → {os.path.basename(clean_file)}")
-                        self.history_append(f"{file_name}")
-                        for key in removed_keys:
-                            self.history_append(f"  └ 제거: {key}")
+                        result_msg = "JavaScript 관련 요소 제거됨"
+                        self.log_append(f"[완료] PDF 스크립트 요소 제거 완료: → {os.path.basename(clean_file)}")
+                        self.history_append(f"{file_name} -> [제거] {', '.join(removed_keys)}")
                     else:
-                        result_msg = "JavaScript 없음"
-                        self.log_append("[완료] JavaScript 없음")
+                        result_msg = "제거할 JavaScript 요소 없음"
+                        self.log_append("[완료] 제거할 JavaScript 요소가 없습니다.")
 
                 elif ext in (".hwp", ".hwpx", ".hwpml"):
                     clean_file, removed_strings = sanitize_hwp(file_path)
                     if removed_strings:
                         removed_elements.extend(removed_strings)
-                        result_msg = "위험 문자열 제거됨"
-                        self.log_append(f"[완료] 문자열 제거됨: → {os.path.basename(clean_file)}")
-                        self.history_append(f"{file_name}")
-                        for s in removed_strings:
-                            self.history_append(f"  └ 제거: {s}")
+                        result_msg = "위험 의심 문자열 제거됨"
+                        self.log_append(f"[완료] HWP 위험 의심 문자열 제거 완료: → {os.path.basename(clean_file)}")
+                        self.history_append(f"{file_name} -> [제거] {', '.join(removed_strings)}")
                     else:
-                        result_msg = "위험 문자열 없음"
-                        self.log_append("[완료] 위험 문자열 없음")
+                        result_msg = "제거할 위험 의심 문자열 없음"
+                        self.log_append("[완료] 제거할 위험 의심 문자열이 없습니다.")
                 else:
                     result_msg = "지원되지 않는 파일 형식"
                     self.log_append("[오류] 지원되지 않는 파일 형식입니다")
@@ -756,7 +787,7 @@ class DocSanitizerApp:
                     })
 
                     # 정상 샘플을 서버에 저장
-                    self._save_clean_sample_to_server(clean_file, file_name)
+                    self._save_clean_sample_to_server(clean_file, original_name=file_name)
 
             except Exception as e:
                 self.log_append(f"[오류] 처리 중 오류 발생: {str(e)}")
@@ -811,14 +842,25 @@ class DocSanitizerApp:
             self.log_append(f"[서버] 정상 샘플 저장 실패: {e}")
 
     def retrain_model_locally(self):
-        """로컬 모델 재훈련 (서버 없이)"""
+        """GUI에서 입력받은 수량으로 로컬 모델 재훈련"""
+
+        # 입력값 읽기 및 검증
+        try:
+            malware_target_count = int(self.malware_entry.get())
+            clean_target_count = int(self.clean_entry.get())
+            if malware_target_count < 10 or clean_target_count < 10:
+                messagebox.showerror("입력 오류", "악성 및 정상 샘플 수는 최소 10 이상이어야 합니다.")
+                return
+        except ValueError:
+            messagebox.showerror("입력 오류", "샘플 수량은 숫자로만 입력해주세요.")
+            return
 
         def training_thread():
             try:
-                self.model_log_append("=== 로컬 모델 재훈련 시작 ===")
+                self.model_log_append(
+                    f"=== GUI 기반 모델 재훈련 시작 (목표: 악성 {malware_target_count}, 정상 {clean_target_count}) ===")
                 self.model_log_append("1단계: 새로운 악성코드 샘플 수집 중...")
 
-                # 샘플 수집
                 from utils.api_client import collect_training_data_with_progress
 
                 def progress_callback(message):
@@ -827,78 +869,51 @@ class DocSanitizerApp:
 
                 try:
                     malware_files, clean_files = collect_training_data_with_progress(
-                        malware_count=200,  # 악성 샘플 증가
-                        clean_count=120,  # 정상 샘플 감소
+                        malware_count=malware_target_count,
+                        clean_count=clean_target_count,
                         progress_callback=progress_callback
                     )
-
                     self.model_log_append(f"수집 완료: 악성 {len(malware_files)}개, 정상 {len(clean_files)}개")
-
                 except Exception as collect_error:
                     self.model_log_append(f"샘플 수집 실패: {collect_error}")
                     return
 
                 self.model_log_append("2단계: AI 모델 훈련 중...")
 
-                # 로컬 훈련 실행
                 from utils.model_trainer import ModelTrainer
                 trainer = ModelTrainer()
                 success = trainer.train_model()
 
                 if success:
                     self.model_log_append("로컬 모델 훈련 성공!")
-
-                    # 훈련 결과 표시
                     try:
-                        import json
                         with open("models/model_meta.json") as f:
                             meta = json.load(f)
-
                         self.model_log_append("--- 훈련 결과 ---")
                         self.model_log_append(f"정확도: {meta.get('accuracy', 0):.3f}")
-                        if 'test_accuracy' in meta:
-                            self.model_log_append(f"테스트 정확도: {meta.get('test_accuracy', 0):.3f}")
-                        if 'cv_accuracy' in meta:
-                            self.model_log_append(f"CV 정확도: {meta.get('cv_accuracy', 0):.3f}")
-                        self.model_log_append(f"악성 샘플: {meta.get('malware_samples', 0)}개")
-                        self.model_log_append(f"정상 샘플: {meta.get('clean_samples', 0)}개")
-                        self.model_log_append(f"훈련 시각: {meta.get('trained_at', 'N/A')}")
-
-                        # 클래스별 성능 정보
-                        if 'precision_per_class' in meta:
-                            prec = meta['precision_per_class']
-                            if len(prec) >= 2:
-                                self.model_log_append(f"정상 파일 정밀도: {prec[0]:.3f}")
-                                self.model_log_append(f"악성 파일 정밀도: {prec[1]:.3f}")
-
+                        self.model_log_append(
+                            f"악성 샘플: {meta.get('malware_samples', 0)}개, 정상 샘플: {meta.get('clean_samples', 0)}개")
                     except Exception as meta_error:
                         self.model_log_append(f"메타 정보 로드 실패: {meta_error}")
 
-                    # AWS 업로드
                     if config.USE_AWS:
                         self.model_log_append("3단계: S3 업로드 중...")
                         try:
-                            from utils import aws_helper
                             upload_files = [
                                 ("models/ensemble_model.pkl", "models/ensemble_model.pkl"),
                                 ("models/scaler.pkl", "models/scaler.pkl"),
                                 ("models/model_meta.json", "models/model_meta.json")
                             ]
-
                             for local_path, s3_key in upload_files:
-                                if os.path.exists(local_path):
-                                    if aws_helper.upload(local_path, s3_key):
-                                        self.model_log_append(f"업로드 완료: {s3_key}")
-
+                                if os.path.exists(local_path) and aws_helper.upload(local_path, s3_key):
+                                    self.model_log_append(f"업로드 완료: {s3_key}")
                         except Exception as aws_error:
                             self.model_log_append(f"AWS 업로드 실패: {aws_error}")
-
                 else:
                     self.model_log_append("로컬 모델 훈련 실패")
 
                 self.model_log_append("=== 모델 재훈련 완료 ===")
                 self.update_model_status()
-
             except Exception as e:
                 self.model_log_append(f"재훈련 오류: {str(e)}")
 

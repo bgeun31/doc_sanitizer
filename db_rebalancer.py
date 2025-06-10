@@ -1,7 +1,7 @@
-# db_rebalancer.py - RDS 샘플 비율 자동 조정
 
 import os
 import random
+import argparse  # <<< 명령어 처리를 위해 argparse 추가
 from utils import db
 from utils.db import get_db, VirusSample
 from sqlalchemy import text
@@ -32,6 +32,39 @@ class DatabaseRebalancer:
             'target_malware_ratio': self.target_malware_ratio,
             'needs_rebalancing': abs(current_malware_ratio - self.target_malware_ratio) > 0.1
         }
+
+
+    def remove_generated_clean_samples(self):
+        """'local_generated', 'virustotal_verified' 출처를 가진 샘플만 삭제"""
+        try:
+            session = get_db()
+
+            target_sources = ('local_generated', 'virustotal_verified')
+
+            # 삭제 전 개수 확인
+            query = text("SELECT COUNT(*) FROM virus_samples WHERE source IN :sources")
+            count_before = session.execute(query, {"sources": target_sources}).scalar_one()
+
+            if count_before == 0:
+                print("삭제할 자동 생성 정상 샘플이 없습니다.")
+                return
+
+            print(f"삭제 대상인 자동 생성 정상 샘플 {count_before}개를 발견했습니다. 삭제를 진행합니다...")
+
+            # 대상 샘플 삭제
+            delete_query = text("DELETE FROM virus_samples WHERE source IN :sources")
+            result = session.execute(delete_query, {"sources": target_sources})
+
+            session.commit()
+            print(f"자동 생성된 정상 샘플 {result.rowcount}개 제거 완료")
+
+        except Exception as e:
+            print(f"자동 생성 샘플 제거 실패: {e}")
+            session.rollback()
+        finally:
+            session.close()
+
+
 
     def rebalance_database(self, max_total_samples=400):
         """RDS 샘플 비율 자동 조정"""
@@ -134,30 +167,39 @@ class DatabaseRebalancer:
             session.close()
 
 
-def rebalance_command():
-    """명령어로 실행할 수 있는 함수"""
+
+def main():
+    """명령어 라인 인터페이스"""
+    parser = argparse.ArgumentParser(description="데이터베이스 샘플 관리 스크립트")
+    parser.add_argument('command', choices=['rebalance', 'clean-generated'], help="실행할 명령어 선택")
+
+    args = parser.parse_args()
+
     rebalancer = DatabaseRebalancer()
 
-    print("=== RDS 데이터베이스 비율 조정 ===")
+    if args.command == 'rebalance':
+        print("=== RDS 데이터베이스 비율 조정 시작 ===")
+        analysis = rebalancer.analyze_current_balance()
+        if not analysis:
+            print("데이터베이스가 비어있습니다")
+            return
 
-    # 현재 상태 분석
-    analysis = rebalancer.analyze_current_balance()
-    if not analysis:
-        print("데이터베이스가 비어있습니다")
-        return
+        print(f"현재 상태:")
+        print(f"  총 샘플: {analysis['total_samples']}개")
+        print(f"  악성: {analysis['malicious_samples']}개 ({analysis['current_malware_ratio']:.1%})")
+        print(f"  정상: {analysis['clean_samples']}개 ({1 - analysis['current_malware_ratio']:.1%})")
 
-    print(f"현재 상태:")
-    print(f"  총 샘플: {analysis['total_samples']}개")
-    print(f"  악성: {analysis['malicious_samples']}개 ({analysis['current_malware_ratio']:.1%})")
-    print(f"  정상: {analysis['clean_samples']}개 ({1 - analysis['current_malware_ratio']:.1%})")
+        if analysis['needs_rebalancing']:
+            print("\n비율 조정이 필요합니다")
+            rebalancer.remove_duplicate_samples()
+            rebalancer.rebalance_database()
+        else:
+            print("\n비율이 적절합니다")
 
-    if analysis['needs_rebalancing']:
-        print("\n비율 조정이 필요합니다")
-        rebalancer.remove_duplicate_samples()
-        rebalancer.rebalance_database()
-    else:
-        print("\n비율이 적절합니다")
+    elif args.command == 'clean-generated':
+        print("=== 자동 생성 정상 샘플 삭제 시작 ===")
+        rebalancer.remove_generated_clean_samples()
 
 
 if __name__ == "__main__":
-    rebalance_command()
+    main()
