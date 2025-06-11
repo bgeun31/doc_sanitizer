@@ -41,3 +41,4 @@ uvicorn
 fastapi
 
 # 메인서버 A작업
+fastapi
