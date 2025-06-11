@@ -1,6 +1,11 @@
 import os
+import config
 
-def sanitize_hwp(file_path: str, output_dir: str = "sample/clear") -> tuple[str, list[str]]:
+
+def sanitize_hwp(file_path: str, output_dir: str = None) -> tuple[str, list[str]]:
+    if output_dir is None:
+        output_dir = config.DIRECTORIES['sanitized_output']
+
     ext = os.path.splitext(file_path)[1].lower()
     filename = os.path.splitext(os.path.basename(file_path))[0]
     clean_file = os.path.join(output_dir, f"{filename}_clean{ext}")

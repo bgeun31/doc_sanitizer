@@ -1,86 +1,57 @@
-문서형 악성코드 무해화 시스템 v2.2 Microsoft Office, PDF, 한글 문서의 악성코드 탐지 및 무해화 시스템
+# 문서형 악성코드 무해화 시스템 v2.2
 
+Microsoft Office, PDF, 한글 문서의 악성코드 탐지 및 무해화 시스템
 
-# 빠른 시작   
-```1. Mac OS```
-```sh
+## 빠른 시작
+
+### macOS
+```bash
 python test_api.py setup
-```
-```sh
 python main.py
 ```
 
-```2. Windows OS```
-```sh
+### Windows
+```cmd
 python test_api.py setup
-```
-```sh
 python main.py
 ```
 
-# 환경 설정
-```1. Mac OS```
-```sh
+## 환경 설정
+
+### macOS
+```bash
 pip install -r requirements.txt
-```
-```sh
 cp .env.example .env
 ```
 (.env 파일을 열어서 실제 API 키로 교체)
 
-```2. Windows OS```
-```sh
+### Windows
+```cmd
 pip install -r requirements.txt
-```
-```sh
 copy .env.example .env
 ```
 (.env 파일을 메모장으로 열어서 실제 API 키로 교체)
 
-```3. API 키 발급```
-```sh
-MalwareBazaar: https://bazaar.abuse.ch/api/
-```
-```sh
-VirusTotal: https://www.virustotal.com/gui/my-apikey
-```
+### API 키 발급
+- **MalwareBazaar**: https://bazaar.abuse.ch/api/
+- **VirusTotal**: https://www.virustotal.com/gui/my-apikey
 
-# 프로젝트 다운로드(클론) 및 git 사용법
+## 주요 기능
 
-```
- 1 프로젝트 다운로드(클론)
-  - sourcetree 상단에 clone 버튼 클릭
-  - 소스경로(https://github.com/bgeun31/doc_sanitizer), 목적지 경로(탐색 누르고 본인이 원하는 저장할 폴더 선택) 입력
-  - 클론(clone) 클릭
-  - 저장할 폴더에 정상적으로 프로젝트 파일들이 다운됐는지 확인
+- **AI 기반 탐지**: 머신러닝 모델을 통한 악성코드 예측
+- **룰 기반 탐지**: Office 매크로, PDF JavaScript, HWP 스크립트 탐지  
+- **VirusTotal 검증**: 온라인 바이러스 검사 서비스 연동
+- **문서 무해화**: 악성 요소 제거 및 안전한 문서 생성
+- **공용 DB 연동**: 바이러스 샘플 공유 및 재훈련 시스템
 
- 2. git branch 생성 (최초 1회만 진행)
-  - 상단에 브랜치 클릭
-  - 새 브랜치 항목에 본인이 작업할 공간의 이름을 입력 후 브랜치 생성 클릭 (ex. dev.song)
-  - 왼쪽 사이드바에 본인 브랜치에 점이 있는지 확인(현재 브랜치 확인)
-  - 이후 다시 클론할 경우 왼쪽 사이드바에 원격-origin-본인 브랜치 순으로 클릭해서 이동하면 됨.
+## 지원 파일 형식
 
- 3. git commit, pull, push 사용법
-  - 본인이 코드를 수정하거나 작업하면 왼쪽 사이드바 '파일 상태'에 변경된 파일 목록이 뜸.
-  - commit할 파일들을 올리고 하단 창에 본인이 작업한 내용을 작성하고 커밋을 하면 됨.
-  - 작업하는 동안 commit을 진행하고 작업이 완료되면 상단에 push를 누르고 본인 브랜치만 체크한 후 Push 진행.
-  - Github 본인 브랜치에 작업한 내용이 잘 올라갔는지 확인.
-```
+- **Microsoft Office**: .docx, .docm, .xlsx, .xlsm, .pptx, .pptm
+- **PDF**: .pdf  
+- **한글**: .hwp, .hwpx, .hwpml
 
+## 폴더 구조
 
-# 주요 기능
-```
-AI 기반 탐지: 머신러닝 모델을 통한 악성코드 예측
-룰 기반 탐지: Office 매크로, PDF JavaScript, HWP 스크립트 탐지
-VirusTotal 검증: 온라인 바이러스 검사 서비스 연동
-문서 무해화: 악성 요소 제거 및 안전한 문서 생성
-지원 파일 형식
-Microsoft Office: .docx, .docm, .xlsx, .xlsm, .pptx, .pptm
-PDF: .pdf
-한글: .hwp, .hwpx, .hwpml
-```
-
-# 폴더 구조
 ```
 doc_sanitizer/
 ├── main.py                 # GUI 메인 애플리케이션
@@ -89,50 +60,164 @@ doc_sanitizer/
 ├── utils/                 # 핵심 모듈
 ├── sample/
 │   ├── mecro/             # 악성 샘플 (로컬만)
-│   └── clear/             # 정상/정리된 파일
+│   ├── clear/             # 자체생성 클린파일
+│   └── clean/             # 무해화된 파일
 └── models/                # 훈련된 AI 모델
 ```
 
-# 디버깅
-```sh
+## 주요 변경사항 v2.2
+
+1. **폴더 구조 개선**: 
+   - `sample/clear/`: 자체생성 클린파일
+   - `sample/clean/`: 무해화된 파일 격리
+2. **GUI 최적화**: 업로드 즉시 검사 실행
+3. **AWS 모델 로드 개선**: S3 연동 Hot-fix 적용  
+4. **공용 DB 연동**: 바이러스 샘플 공유 및 재훈련 지원
+5. **통합 검사 프로세스**: AI + 룰 기반 + VirusTotal 동시 실행
+
+## 디버깅
+
+### macOS
+```bash
 python force_retrain.py
-```
-```sh
 python debug_env.py
 ```
 
-# Git 사용법
-1. 새 브랜치 생성 및 커밋/푸쉬
-```sh
+### Windows  
+```cmd
+python force_retrain.py
+python debug_env.py
+```
+
+## Git 사용법
+
+### 새 브랜치 생성 및 작업
+
+#### macOS
+```bash
 git checkout -b dev.your_name
-```
-```sh
 git add .
-```
-```sh
 git commit -m "작업 내용"
-```
-```sh
 git push origin dev.your_name
 ```
-2. 동기화
-```sh
+
+#### Windows
+```cmd
+git checkout -b dev.your_name
+git add .
+git commit -m "작업 내용"  
+git push origin dev.your_name
+```
+
+### 동기화
+
+#### macOS/Windows 공통
+```bash
 git pull origin dev
 ```
+
 - sample/mecro/ 폴더는 로컬에만 존재
 - 모델 파일은 용량 문제로 Git에서 제외됨
 
-# AWS EC2 시그니처 모델 관련 명령어
-1. S3 버킷 업로드
-```sh
-aws s3 cp models/model_meta.json s3://doc-sanitizer-bucket/models/
+## AWS 연동 설정
+
+### 1. .env 파일 설정
+```env
+USE_AWS=true
+AWS_REGION=ap-southeast-2
+S3_BUCKET=your-bucket-name
+RDS_HOST=your-rds-endpoint
+RDS_DB=your-database-name
+RDS_USER=your-username
+RDS_PASSWORD=your-password
 ```
-2. CLI 원격 접속
-```sh
-ssh -i <키 경로> -L 8000:localhost:8000 ec2-user@<EC2 인스턴스 IP>
+
+### 2. AWS CLI 설정 (선택사항)
+
+#### macOS
+```bash
+brew install awscli
+aws configure
 ```
-(키 경로 예시: C:\Users\sskm0\sanitizer_key.pem)
-3. 백엔드 서버 열기
-```sh
+
+#### Windows
+```cmd
+# AWS CLI 설치 후
+aws configure
+```
+
+### 3. S3 버킷 업로드
+
+#### macOS/Windows 공통
+```bash
+aws s3 cp models/model_meta.json s3://your-bucket/models/
+```
+
+### 4. EC2 원격 접속
+
+#### macOS
+```bash
+ssh -i ~/path/to/key.pem -L 8000:localhost:8000 ec2-user@your-ec2-ip
+```
+
+#### Windows
+```cmd
+ssh -i C:\path\to\key.pem -L 8000:localhost:8000 ec2-user@your-ec2-ip
+```
+
+### 5. 백엔드 서버 실행
+```bash
 uvicorn retrain_server:app --host 0.0.0.0 --port 8000
 ```
+
+## 데이터베이스 스키마
+
+### training_history 테이블
+```sql
+CREATE TABLE training_history (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    model_ver VARCHAR(50) NOT NULL,
+    sample_count INT NOT NULL,
+    accuracy FLOAT NOT NULL,
+    trained_at DATETIME NOT NULL
+);
+```
+
+### virus_samples 테이블  
+```sql
+CREATE TABLE virus_samples (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    file_name VARCHAR(255) NOT NULL,
+    file_hash VARCHAR(64) UNIQUE NOT NULL,
+    file_type VARCHAR(50) NOT NULL,
+    file_size INT NOT NULL,
+    source VARCHAR(100) NOT NULL,
+    malware_family VARCHAR(100),
+    threat_category VARCHAR(100), 
+    is_malicious BOOLEAN NOT NULL,
+    s3_key VARCHAR(500),
+    uploaded_at DATETIME NOT NULL,
+    features_json TEXT
+);
+```
+
+## 문제 해결
+
+### macOS 관련 이슈
+- **7zip 설치**: `brew install p7zip`
+- **권한 문제**: `chmod +x script_name.py`
+
+### Windows 관련 이슈  
+- **7zip 설치**: https://www.7-zip.org/download.html
+- **권한 문제**: 관리자 권한으로 실행
+
+### 공통 이슈
+- **API 키 오류**: .env 파일에서 키 값 확인
+- **모델 로드 실패**: AWS 설정 또는 로컬 파일 확인
+- **DB 연결 실패**: RDS 설정 및 보안그룹 확인
+
+## 라이선스 및 주의사항
+
+- 이 시스템은 보안 연구 목적으로만 사용해야 합니다
+- 악성 샘플 처리 시 격리된 환경에서 실행하세요
+- API 키는 절대 공개하지 마세요

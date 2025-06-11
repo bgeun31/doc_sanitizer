@@ -1,10 +1,11 @@
-# utils/model_manager.py - 개선된 버전 (증분 학습 지원)
+# utils/model_manager.py - 최종 버전 (AWS 지원)
 
 import os
 from typing import Dict, Any
-
+import config
 from utils.feature_extractor import FeatureExtractor
 from utils.model_trainer import ModelTrainer
+from utils import aws_helper
 
 
 class ModelManager:
@@ -17,14 +18,38 @@ class ModelManager:
         self.supported_extensions = {'.hwp', '.hwpx', '.docx', '.docm', '.pdf', '.pptx', '.pptm', '.xlsx', '.xlsm'}
 
     def is_model_available(self) -> bool:
-        """훈련된 모델이 있는지 확인"""
+        """훈련된 모델이 있는지 확인 (AWS 우선)"""
+        if config.USE_AWS:
+            # AWS S3에서 모델 확인
+            try:
+                s3_info = aws_helper.get_s3_model_info("models/ensemble_model.pkl")
+                if "error" not in s3_info:
+                    # S3에 모델이 있으면 로컬로 다운로드
+                    if not os.path.exists(self.trainer.model_path):
+                        aws_helper.download("models/ensemble_model.pkl", self.trainer.model_path)
+                    if not os.path.exists(self.trainer.scaler_path):
+                        aws_helper.download("models/scaler.pkl", self.trainer.scaler_path)
+
+                    return (os.path.exists(self.trainer.model_path) and
+                            os.path.exists(self.trainer.scaler_path))
+            except Exception as e:
+                print(f"AWS 모델 확인 실패: {e}")
+
+        # 로컬 모델 확인
         return (os.path.exists(self.trainer.model_path) and
                 os.path.exists(self.trainer.scaler_path))
 
     def load_model(self) -> bool:
-        """모델 로드"""
+        """모델 로드 (AWS 우선)"""
         if self.model_loaded:
             return True
+
+        # AWS에서 최신 모델 동기화
+        if config.USE_AWS:
+            try:
+                self._sync_model_from_aws()
+            except Exception as e:
+                print(f"AWS 모델 동기화 실패: {e}")
 
         if not self.is_model_available():
             return False
@@ -34,6 +59,33 @@ class ModelManager:
             self.model_loaded = True
 
         return success
+
+    def _sync_model_from_aws(self):
+        """AWS S3에서 모델 동기화"""
+        model_files = {
+            "models/ensemble_model.pkl": self.trainer.model_path,
+            "models/scaler.pkl": self.trainer.scaler_path,
+            "models/model_meta.json": "models/model_meta.json"
+        }
+
+        for s3_key, local_path in model_files.items():
+            # 로컬 디렉토리 생성
+            local_dir = os.path.dirname(local_path)
+            if local_dir:
+                os.makedirs(local_dir, exist_ok=True)
+
+            # 로컬 파일이 없으면 다운로드
+            if not os.path.exists(local_path):
+                print(f"AWS에서 {s3_key} 다운로드 중...")
+                aws_helper.download(s3_key, local_path)
+            else:
+                # S3와 로컬 파일 비교 (선택사항)
+                try:
+                    s3_info = aws_helper.get_s3_model_info(s3_key)
+                    if "error" not in s3_info:
+                        print(f"AWS 모델 확인 완료: {s3_key}")
+                except Exception:
+                    pass
 
     def predict_file(self, file_path: str) -> Dict[str, Any]:
         """파일 악성코드 예측 (지원 형식만)"""
@@ -59,34 +111,41 @@ class ModelManager:
         return self.trainer.predict(file_path)
 
     def get_model_info(self) -> Dict[str, Any]:
-        """모델 정보 반환"""
+        """모델 정보 반환 (AWS 정보 포함)"""
         info = {
             "model_available": self.is_model_available(),
             "model_loaded": self.model_loaded,
             "model_path": self.trainer.model_path,
             "scaler_path": self.trainer.scaler_path,
-            "supported_formats": list(self.supported_extensions)
+            "supported_formats": list(self.supported_extensions),
+            "aws_enabled": config.USE_AWS
         }
 
         if self.is_model_available():
             try:
-                # 모델 파일 크기
-                model_size = os.path.getsize(self.trainer.model_path)
-                scaler_size = os.path.getsize(self.trainer.scaler_path)
+                # 로컬 모델 파일 크기
+                if os.path.exists(self.trainer.model_path):
+                    model_size = os.path.getsize(self.trainer.model_path)
+                    info["model_size_mb"] = round(model_size / (1024 * 1024), 2)
+                    info["model_created"] = os.path.getctime(self.trainer.model_path)
 
-                info.update({
-                    "model_size_mb": round(model_size / (1024 * 1024), 2),
-                    "scaler_size_kb": round(scaler_size / 1024, 2),
-                    "model_created": os.path.getctime(self.trainer.model_path)
-                })
+                if os.path.exists(self.trainer.scaler_path):
+                    scaler_size = os.path.getsize(self.trainer.scaler_path)
+                    info["scaler_size_kb"] = round(scaler_size / 1024, 2)
 
-                # 훈련 기록 정보 추가
+                # AWS 정보
+                if config.USE_AWS:
+                    s3_info = aws_helper.get_s3_model_info("models/ensemble_model.pkl")
+                    if "error" not in s3_info:
+                        info["aws_model_info"] = s3_info
+                    else:
+                        info["aws_error"] = s3_info["error"]
+
+                # 훈련 기록 정보
                 if os.path.exists(self.trainer.training_history_path):
                     history_size = os.path.getsize(self.trainer.training_history_path)
-                    info.update({
-                        "training_history_available": True,
-                        "history_size_kb": round(history_size / 1024, 2)
-                    })
+                    info["training_history_available"] = True
+                    info["history_size_kb"] = round(history_size / 1024, 2)
                 else:
                     info["training_history_available"] = False
 
@@ -95,8 +154,8 @@ class ModelManager:
 
         return info
 
-    def train_new_model(self, incremental=True) -> bool:
-        """새 모델 훈련 (증분 학습 또는 전체 학습)"""
+    def train_new_model(self, incremental=True, upload_to_aws=True) -> bool:
+        """새 모델 훈련 (AWS 업로드 포함)"""
         print(f"=== 모델 {'업데이트 (증분 학습)' if incremental else '전체 훈련'} 시작 ===")
 
         # 기존 모델 언로드
@@ -105,26 +164,46 @@ class ModelManager:
 
         # 훈련 방식 선택
         if incremental and self.is_model_available():
-            # 증분 학습
             success = self.trainer.incremental_train_model()
         else:
-            # 전체 학습
             success = self.trainer.train_model()
 
         if success:
             # 새 모델 로드
             self.load_model()
-            print(f"✅ 모델 {'업데이트' if incremental else '훈련'} 및 로드 완료!")
+
+            # AWS에 업로드
+            if upload_to_aws and config.USE_AWS:
+                self._upload_model_to_aws()
+
+            print(f"모델 {'업데이트' if incremental else '훈련'} 및 로드 완료!")
         else:
-            print(f"❌ 모델 {'업데이트' if incremental else '훈련'} 실패")
+            print(f"모델 {'업데이트' if incremental else '훈련'} 실패")
 
         return success
+
+    def _upload_model_to_aws(self):
+        """훈련된 모델을 AWS S3에 업로드"""
+        try:
+            upload_files = [
+                (self.trainer.model_path, "models/ensemble_model.pkl"),
+                (self.trainer.scaler_path, "models/scaler.pkl"),
+                ("models/model_meta.json", "models/model_meta.json")
+            ]
+
+            for local_path, s3_key in upload_files:
+                if os.path.exists(local_path):
+                    aws_helper.upload(local_path, s3_key)
+                    print(f"AWS 업로드 완료: {s3_key}")
+
+        except Exception as e:
+            print(f"AWS 업로드 실패: {e}")
 
     def evaluate_current_model(self):
         """현재 모델 평가"""
         if not self.model_loaded:
             if not self.load_model():
-                print("❌ 평가할 모델이 없습니다")
+                print("평가할 모델이 없습니다")
                 return
 
         self.trainer.evaluate_model()
@@ -134,7 +213,7 @@ class ModelManager:
         malware_count = 0
         clean_count = 0
 
-        # 악성 샘플 카운트 (지원 형식만)
+        # 악성 샘플 카운트
         if os.path.exists("sample/mecro"):
             for f in os.listdir("sample/mecro"):
                 file_path = os.path.join("sample/mecro", f)
@@ -142,10 +221,10 @@ class ModelManager:
                         os.path.splitext(f)[1].lower() in self.supported_extensions):
                     malware_count += 1
 
-        # 정상 샘플 카운트 (지원 형식만)
-        if os.path.exists("sample/clear"):
-            for f in os.listdir("sample/clear"):
-                file_path = os.path.join("sample/clear", f)
+        # 정상 샘플 카운트 (clear 폴더로 변경)
+        if os.path.exists(config.DIRECTORIES['clean_samples']):
+            for f in os.listdir(config.DIRECTORIES['clean_samples']):
+                file_path = os.path.join(config.DIRECTORIES['clean_samples'], f)
                 if (os.path.isfile(file_path) and
                         os.path.splitext(f)[1].lower() in self.supported_extensions):
                     clean_count += 1
@@ -238,47 +317,6 @@ class ModelManager:
         except Exception as e:
             return {"error": f"성능 평가 중 오류: {str(e)}"}
 
-    def clean_old_models(self, keep_backup=True):
-        """이전 모델 파일들 정리"""
-        try:
-            model_dir = "models"
-            if not os.path.exists(model_dir):
-                return
-
-            # 백업 생성 (옵션)
-            if keep_backup and self.is_model_available():
-                import shutil
-                import time
-
-                timestamp = int(time.time())
-                backup_dir = f"models/backup_{timestamp}"
-                os.makedirs(backup_dir, exist_ok=True)
-
-                if os.path.exists(self.trainer.model_path):
-                    shutil.copy2(self.trainer.model_path,
-                                 os.path.join(backup_dir, "ensemble_model.pkl"))
-                if os.path.exists(self.trainer.scaler_path):
-                    shutil.copy2(self.trainer.scaler_path,
-                                 os.path.join(backup_dir, "scaler.pkl"))
-                if os.path.exists(self.trainer.training_history_path):
-                    shutil.copy2(self.trainer.training_history_path,
-                                 os.path.join(backup_dir, "training_history.pkl"))
-
-                print(f"✅ 모델 백업 생성: {backup_dir}")
-
-            # 임시 파일들 정리
-            temp_files = [f for f in os.listdir(model_dir)
-                          if f.endswith('.tmp') or f.startswith('temp_')]
-
-            for temp_file in temp_files:
-                temp_path = os.path.join(model_dir, temp_file)
-                if os.path.isfile(temp_path):
-                    os.remove(temp_path)
-                    print(f"✅ 임시 파일 삭제: {temp_file}")
-
-        except Exception as e:
-            print(f"❌ 모델 정리 중 오류: {e}")
-
     def get_supported_formats_info(self) -> Dict[str, Any]:
         """지원 파일 형식 정보"""
         format_info = {
@@ -307,71 +345,3 @@ model_manager = ModelManager()
 def get_model_manager() -> ModelManager:
     """모델 매니저 인스턴스 반환"""
     return model_manager
-
-
-if __name__ == "__main__":
-    # 테스트
-    manager = ModelManager()
-
-    print("=== 모델 관리자 테스트 ===")
-
-    # 지원 형식 정보
-    format_info = manager.get_supported_formats_info()
-    print(f"지원 형식: {format_info['total_supported']}개")
-    for ext, desc in format_info['format_descriptions'].items():
-        print(f"  {ext}: {desc}")
-
-    # 모델 정보 확인
-    info = manager.get_model_info()
-    print(f"\n모델 정보: {info}")
-
-    # 훈련 데이터 상태 확인
-    data_status = manager.get_training_data_status()
-    print(f"\n훈련 데이터 상태: {data_status}")
-
-    # 모델이 있으면 테스트 예측
-    if manager.is_model_available():
-        print("\n모델 로드 테스트...")
-        if manager.load_model():
-            print("✅ 모델 로드 성공")
-
-            # 성능 요약
-            performance = manager.get_model_performance_summary()
-            print(f"\n모델 성능: {performance}")
-
-            # 샘플 파일로 예측 테스트
-            test_files = []
-
-            # 악성 샘플 테스트
-            if os.path.exists("sample/mecro"):
-                malware_files = [
-                    os.path.join("sample/mecro", f)
-                    for f in os.listdir("sample/mecro")[:2]
-                    if os.path.isfile(os.path.join("sample/mecro", f))
-                ]
-                test_files.extend(malware_files)
-
-            # 정상 샘플 테스트
-            if os.path.exists("sample/clear"):
-                clean_files = [
-                    os.path.join("sample/clear", f)
-                    for f in os.listdir("sample/clear")[:2]
-                    if os.path.isfile(os.path.join("sample/clear", f))
-                ]
-                test_files.extend(clean_files)
-
-            if test_files:
-                print(f"\n{len(test_files)}개 파일 배치 예측 테스트...")
-                results = manager.batch_predict(test_files)
-                for filename, result in results.items():
-                    if "error" in result:
-                        print(f"❌ {filename}: {result['error']}")
-                    else:
-                        print(f"✅ {filename}: {result.get('prediction', 'Unknown')} "
-                              f"(신뢰도: {result.get('confidence', 0):.3f})")
-        else:
-            print("❌ 모델 로드 실패")
-    else:
-        print("❌ 훈련된 모델이 없습니다")
-        print("먼저 다음 명령어로 모델을 훈련하세요:")
-        print("python utils/model_trainer.py")

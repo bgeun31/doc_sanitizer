@@ -1,9 +1,10 @@
 import os
 import sys
 from dotenv import load_dotenv
-from utils.api_client import APIClient, collect_training_data
+from utils.api_client import APIClient, collect_training_data_with_progress
 from utils.model_manager import ModelManager
 from utils.model_trainer import train_model
+import config
 
 
 class OptimizedProgressTracker:
@@ -41,12 +42,37 @@ def test_system():
     mb_status = "✅" if api_client.malware_bazaar_key and api_client.test_malware_bazaar_connection() else "❌"
     print(f"   MalwareBazaar: {mb_status}")
 
-    # Triage API (선택사항)
-    triage_status = "✅" if hasattr(api_client,
-                                   'triage_key') and api_client.triage_key and api_client.test_triage_connection() else "⚠️"
-    print(f"   Triage: {triage_status} (선택사항)")
+    # VirusTotal API
+    vt_status = "✅" if api_client.virustotal_key and api_client.test_virustotal_connection() else "❌"
+    print(f"   VirusTotal: {vt_status}")
 
-    print("\n2. AI 모델 상태")
+    # Triage API
+    triage_status = "✅" if api_client.triage_key and api_client.test_triage_connection() else "❌"
+    print(f"   Triage: {triage_status}")
+
+    print("\n2. RDS 연결 상태")
+    try:
+        from utils.db import get_sample_statistics
+        db_stats = get_sample_statistics()
+        rds_status = "✅" if db_stats else "❌"
+        print(f"   RDS 데이터베이스: {rds_status}")
+        if db_stats:
+            print(f"   DB 샘플 수: 악성 {db_stats.get('malicious_samples', 0)}개, 정상 {db_stats.get('clean_samples', 0)}개")
+    except Exception as e:
+        print(f"   RDS 데이터베이스: ❌ ({str(e)})")
+
+    print("\n3. AWS 연결 상태")
+    if config.USE_AWS:
+        from utils.aws_helper import test_aws_connection
+        aws_result = test_aws_connection()
+        aws_status = "✅" if aws_result.get("status") == "success" else "❌"
+        print(f"   AWS S3: {aws_status}")
+        if aws_result.get("status") != "success":
+            print(f"   오류: {aws_result.get('message', 'Unknown')}")
+    else:
+        print("   AWS S3: ⚠️ (비활성화)")
+
+    print("\n4. AI 모델 상태")
     model_manager = ModelManager()
 
     model_available = model_manager.is_model_available()
@@ -58,28 +84,34 @@ def test_system():
     else:
         print(f"   모델 로드: ❌")
 
-    print("\n3. 훈련 데이터 상태")
+    print("\n5. 로컬 훈련 데이터 상태")
     data_status = model_manager.get_training_data_status()
-    print(f"   악성 샘플: {data_status['malware_samples']}개")
-    print(f"   정상 샘플: {data_status['clean_samples']}개")
+    print(f"   로컬 악성 샘플: {data_status['malware_samples']}개")
+    print(f"   로컬 정상 샘플: {data_status['clean_samples']}개")
 
     data_sufficient = data_status['sufficient_data']
     sufficient_status = "✅" if data_sufficient else "⚠️"
     print(f"   데이터 충분성: {sufficient_status}")
 
+    print("\n6. 내장 서버 상태")
+    print(f"   내장 서버: ✅ (main.py 실행시 자동 시작)")
+    print("   별도 서버 실행 불필요")
+
     print("=" * 40)
 
     return {
         'api_available': bool(api_client.malware_bazaar_key),
+        'triage_available': bool(api_client.triage_key),
         'model_available': model_available,
         'data_sufficient': data_sufficient,
-        'data_status': data_status
+        'data_status': data_status,
+        'embedded_server': True
     }
 
 
 def setup_system_optimized():
-    """최적화된 시스템 설정"""
-    print("🚀 문서형 악성코드 무해화 시스템 v2.0 설정")
+    """최적화된 시스템 설정 (중복 필터링 적용)"""
+    print("🚀 문서형 악성코드 무해화 시스템 v2.2 설정")
     print("=" * 50)
 
     test_results = test_system()
@@ -91,71 +123,104 @@ def setup_system_optimized():
         print("3. API 키 발급: https://bazaar.abuse.ch/api/")
         return False
 
-    # 설정 단계 계산
-    steps_needed = 1  # 기본 체크
-    if not test_results['data_sufficient']:
-        steps_needed += 1
-    if not test_results['model_available']:
-        steps_needed += 1
+    # 자동화 플로우 단계 계산
+    steps_needed = 3  # 샘플 수집, 모델 훈련, 업로드
 
     progress = OptimizedProgressTracker(steps_needed)
-    print(f"\n📋 {steps_needed}단계 설정 시작")
+    print(f"\n📋 {steps_needed}단계 자동화 플로우 시작 (중복 필터링 최적화)")
 
-    # 데이터 수집
-    if not test_results['data_sufficient']:
-        current_malware = test_results['data_status']['malware_samples']
-        current_clean = test_results['data_status']['clean_samples']
+    try:
+        # 1단계: 중복 필터링된 샘플 수집
+        progress.update("악성코드 샘플 수집 중 (중복 사전 필터링)")
+        print("\n=== 1단계: 최적화된 샘플 수집 ===")
 
-        print(f"\n현재 데이터: 악성 {current_malware}개, 정상 {current_clean}개")
-
-        proceed = input("데이터를 수집하시겠습니까? (y/n): ").lower()
-        if proceed != 'y':
-            print("설정을 중단합니다.")
-            return False
+        def progress_callback(message):
+            print(f"[진행] {message}")
 
         try:
-            progress.update("훈련 데이터 수집 중")
-            collect_training_data(malware_count=300, clean_count=300)
-            print("\n✅ 데이터 수집 완료")
-        except Exception as e:
-            print(f"\n❌ 데이터 수집 실패: {e}")
+            malware_files, clean_files = collect_training_data_with_progress(
+                malware_count=200,
+                clean_count=200,
+                progress_callback=progress_callback
+            )
+
+            print(f"수집 완료: 악성 {len(malware_files)}개, 정상 {len(clean_files)}개")
+
+            # RDS 상태 확인
+            from utils.db import get_sample_statistics
+            db_stats = get_sample_statistics()
+            print(f"RDS 총 샘플: 악성 {db_stats.get('malicious_samples', 0)}개, 정상 {db_stats.get('clean_samples', 0)}개")
+
+        except Exception as collect_error:
+            print(f"샘플 수집 실패: {collect_error}")
             return False
 
-    # 모델 훈련
-    if not test_results['model_available']:
-        proceed = input("\nAI 모델을 훈련하시겠습니까? (y/n): ").lower()
-        if proceed != 'y':
-            print("설정을 중단합니다.")
+        # 2단계: AI 모델 훈련
+        progress.update("AI 모델 훈련 중")
+        print("\n=== 2단계: AI 모델 훈련 (RDS 데이터 포함) ===")
+
+        success = train_model()
+        if not success:
+            print("❌ 모델 훈련 실패")
             return False
 
+        print("✅ 모델 훈련 성공!")
+
+        # 3단계: 모델 S3 업로드 및 정리
+        progress.update("모델 S3 업로드 중")
+        print("\n=== 3단계: 모델 S3 업로드 ===")
+
+        if config.USE_AWS:
+            from utils import aws_helper
+
+            upload_files = [
+                ("models/ensemble_model.pkl", "models/ensemble_model.pkl"),
+                ("models/scaler.pkl", "models/scaler.pkl"),
+                ("models/model_meta.json", "models/model_meta.json")
+            ]
+
+            upload_success = 0
+            for local_path, s3_key in upload_files:
+                if os.path.exists(local_path):
+                    if aws_helper.upload(local_path, s3_key):
+                        upload_success += 1
+                        print(f"✅ {s3_key} 업로드 완료")
+                    else:
+                        print(f"❌ {s3_key} 업로드 실패")
+
+            print(f"S3 업로드: {upload_success}/{len(upload_files)}개 파일 성공")
+        else:
+            print("AWS가 비활성화되어 S3 업로드 건너뜀")
+
+        progress.update("설정 완료")
+
+        print("\n🎉 전체 자동화 플로우 완료!")
+        print("=" * 50)
+
+        # 최종 상태 출력
         try:
-            progress.update("AI 모델 훈련 중")
-            success = train_model()
-            if success:
-                print("\n✅ 모델 훈련 완료")
-            else:
-                print("\n❌ 모델 훈련 실패")
-                return False
-        except Exception as e:
-            print(f"\n❌ 모델 훈련 실패: {e}")
-            return False
+            import json
+            with open("models/model_meta.json") as f:
+                meta = json.load(f)
 
-    progress.update("설정 완료")
+            print("📊 최종 시스템 상태:")
+            print(f"   AI 모델 정확도: {meta.get('accuracy', 0):.3f}")
+            print(f"   훈련 샘플 수: {meta.get('total_samples', 0)}개")
+            print(f"   모델 버전: {meta.get('model_version', '1.0')}")
+            print(f"   훈련 완료 시각: {meta.get('trained_at', 'N/A')}")
 
-    print("\n🎉 시스템 설정 완료!")
-    print("다음 명령어로 GUI를 실행하세요:")
-    print("python main.py")
+        except Exception as meta_error:
+            print(f"메타 정보 로드 실패: {meta_error}")
 
-    # 최종 상태 확인
-    final_test = test_system()
-    total_samples = final_test['data_status']['malware_samples'] + final_test['data_status']['clean_samples']
-    model_status = "사용 가능" if final_test['model_available'] else "사용 불가"
+        print("\n다음 명령어로 GUI를 실행하세요:")
+        print("python main.py")
+        print("\n내장 서버가 자동으로 시작됩니다 (별도 서버 실행 불필요)")
 
-    print(f"\n📊 최종 상태")
-    print(f"   총 훈련 샘플: {total_samples}개")
-    print(f"   AI 모델: {model_status}")
+        return True
 
-    return True
+    except Exception as e:
+        print(f"\n❌ 자동화 플로우 중 오류 발생: {str(e)}")
+        return False
 
 
 def quick_test():
@@ -177,19 +242,19 @@ def quick_test():
     # 테스트 파일 수집
     test_files = []
 
-    if os.path.exists("sample/mecro"):
+    if os.path.exists(config.DIRECTORIES['malware_samples']):
         malware_files = [
-            os.path.join("sample/mecro", f)
-            for f in os.listdir("sample/mecro")[:3]
-            if os.path.isfile(os.path.join("sample/mecro", f))
+            os.path.join(config.DIRECTORIES['malware_samples'], f)
+            for f in os.listdir(config.DIRECTORIES['malware_samples'])[:3]
+            if os.path.isfile(os.path.join(config.DIRECTORIES['malware_samples'], f))
         ]
         test_files.extend(malware_files)
 
-    if os.path.exists("sample/clear"):
+    if os.path.exists(config.DIRECTORIES['clean_samples']):
         clean_files = [
-            os.path.join("sample/clear", f)
-            for f in os.listdir("sample/clear")[:3]
-            if os.path.isfile(os.path.join("sample/clear", f))
+            os.path.join(config.DIRECTORIES['clean_samples'], f)
+            for f in os.listdir(config.DIRECTORIES['clean_samples'])[:3]
+            if os.path.isfile(os.path.join(config.DIRECTORIES['clean_samples'], f))
         ]
         test_files.extend(clean_files)
 
@@ -201,7 +266,7 @@ def quick_test():
 
     for file_path in test_files:
         file_name = os.path.basename(file_path)
-        expected_type = "악성" if "mecro" in file_path else "정상"
+        expected_type = "악성" if config.DIRECTORIES['malware_samples'] in file_path else "정상"
 
         result = model_manager.predict_file(file_path)
 
@@ -211,7 +276,6 @@ def quick_test():
             prediction = result['prediction']
             confidence = result['confidence']
 
-            # 정확도 확인
             accuracy_icon = "✅" if prediction == expected_type else "❌"
 
             print(f"{accuracy_icon} {file_name}: {prediction} (신뢰도: {confidence:.2f})")
@@ -233,18 +297,102 @@ def show_system_info():
         print(f"모델 크기: {model_info.get('model_size_mb', 0)} MB")
         print(f"스케일러 크기: {model_info.get('scaler_size_kb', 0)} KB")
 
-    # 데이터 정보
+    # 로컬 데이터 정보
     data_status = model_manager.get_training_data_status()
-    print(f"훈련 데이터: 악성 {data_status['malware_samples']}개, 정상 {data_status['clean_samples']}개")
+    print(f"로컬 훈련 데이터: 악성 {data_status['malware_samples']}개, 정상 {data_status['clean_samples']}개")
     print(f"데이터 상태: {'충분' if data_status['sufficient_data'] else '부족'}")
+
+    # RDS 데이터 정보
+    try:
+        from utils.db import get_sample_statistics
+        db_stats = get_sample_statistics()
+        print(f"RDS 데이터: 악성 {db_stats.get('malicious_samples', 0)}개, 정상 {db_stats.get('clean_samples', 0)}개")
+        print(f"RDS 총 샘플: {db_stats.get('total_samples', 0)}개")
+    except Exception as e:
+        print(f"RDS 연결 실패: {e}")
 
     # API 상태
     api_client = APIClient()
     mb_available = bool(api_client.malware_bazaar_key)
-    triage_available = bool(hasattr(api_client, 'triage_key') and api_client.triage_key)
+    vt_available = bool(api_client.virustotal_key)
+    triage_available = bool(api_client.triage_key)
 
     print(f"MalwareBazaar API: {'사용 가능' if mb_available else '키 없음'}")
-    print(f"Triage API: {'사용 가능' if triage_available else '키 없음 (선택사항)'}")
+    print(f"VirusTotal API: {'사용 가능' if vt_available else '키 없음'}")
+    print(f"Triage API: {'사용 가능' if triage_available else '키 없음'}")
+
+    # AWS 상태
+    print(f"AWS 연동: {'활성화' if config.USE_AWS else '비활성화'}")
+    if config.USE_AWS:
+        print(f"S3 버킷: {config.S3_BUCKET}")
+        print(f"AWS 리전: {config.AWS_REGION}")
+
+    # 서버 상태
+    print(f"서버 모드: 내장 서버 (main.py에서 자동 시작)")
+
+
+def automated_retrain():
+    """자동화된 모델 재훈련 (중복 필터링 최적화)"""
+    print("=== 자동화된 모델 재훈련 (중복 필터링 최적화) ===")
+
+    try:
+        # 1단계: 새로운 샘플 수집 (중복 사전 필터링)
+        print("1단계: 새로운 샘플 수집 중 (중복 사전 필터링)...")
+
+        def progress_callback(message):
+            print(f"[진행] {message}")
+
+        malware_files, clean_files = collect_training_data_with_progress(
+            malware_count=100,
+            clean_count=100,
+            progress_callback=progress_callback
+        )
+
+        print(f"수집 완료: 악성 {len(malware_files)}개, 정상 {len(clean_files)}개")
+
+        # 2단계: 모델 재훈련
+        print("2단계: 모델 재훈련 중...")
+        success = train_model()
+
+        if success:
+            print("✅ 모델 재훈련 성공!")
+
+            # 3단계: S3 업로드
+            if config.USE_AWS:
+                print("3단계: S3 업로드 중...")
+                from utils import aws_helper
+
+                upload_files = [
+                    ("models/ensemble_model.pkl", "models/ensemble_model.pkl"),
+                    ("models/scaler.pkl", "models/scaler.pkl"),
+                    ("models/model_meta.json", "models/model_meta.json")
+                ]
+
+                for local_path, s3_key in upload_files:
+                    if os.path.exists(local_path):
+                        aws_helper.upload(local_path, s3_key)
+
+                print("✅ S3 업로드 완료")
+
+            # 결과 출력
+            try:
+                import json
+                with open("models/model_meta.json") as f:
+                    meta = json.load(f)
+
+                print("\n📊 재훈련 결과:")
+                print(f"정확도: {meta.get('accuracy', 0):.3f}")
+                print(f"총 샘플: {meta.get('total_samples', 0)}개")
+                print(f"훈련 완료: {meta.get('trained_at', 'N/A')}")
+
+            except Exception as meta_error:
+                print(f"메타 정보 로드 실패: {meta_error}")
+
+        else:
+            print("❌ 모델 재훈련 실패")
+
+    except Exception as e:
+        print(f"❌ 자동화된 재훈련 중 오류: {str(e)}")
 
 
 def main():
@@ -260,11 +408,15 @@ def main():
             quick_test()
         elif command == "info":
             show_system_info()
+        elif command == "retrain":
+            automated_retrain()
         else:
             print("사용법:")
-            print("  python test_api.py setup  - 시스템 초기 설정")
-            print("  python test_api.py test   - 빠른 기능 테스트")
-            print("  python test_api.py info   - 시스템 정보 확인")
+            print("  python test_api.py setup    - 시스템 초기 설정 (중복 필터링 최적화)")
+            print("  python test_api.py test     - 빠른 기능 테스트")
+            print("  python test_api.py info     - 시스템 정보 확인")
+            print("  python test_api.py retrain  - 자동화된 모델 재훈련")
+            print("\nGUI 실행: python main.py (내장 서버 자동 시작)")
     else:
         # 기본 실행: 시스템 상태 확인
         test_system()

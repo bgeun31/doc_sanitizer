@@ -2,12 +2,18 @@ import os
 import shutil
 import zipfile
 from oletools.olevba import VBA_Parser
+import config
+
 
 def is_macro_present(file_path: str) -> bool:
     vbaparser = VBA_Parser(file_path)
     return vbaparser.detect_vba_macros()
 
-def remove_macro(file_path: str, output_dir: str = "sample/clear") -> tuple[str, bool]:
+
+def remove_macro(file_path: str, output_dir: str = None) -> tuple[str, bool]:
+    if output_dir is None:
+        output_dir = config.DIRECTORIES['sanitized_output']
+
     ext = os.path.splitext(file_path)[1].lower()
     if ext not in (".docx", ".docm", ".xlsx", ".xlsm", ".pptx", ".pptm"):
         raise ValueError("지원하지 않는 확장자입니다.")

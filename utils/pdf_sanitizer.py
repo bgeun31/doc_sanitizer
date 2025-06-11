@@ -1,9 +1,12 @@
 import os
 from PyPDF2 import PdfReader, PdfWriter
 from PyPDF2.generic import IndirectObject
+import config
+
 
 def safe_get(obj):
     return obj.get_object() if isinstance(obj, IndirectObject) else obj
+
 
 def find_javascript_keys(obj, found=None, path=""):
     if found is None:
@@ -21,7 +24,11 @@ def find_javascript_keys(obj, found=None, path=""):
             find_javascript_keys(item, found, f"{path}[{i}]")
     return found
 
-def sanitize_pdf(file_path: str, output_dir: str = "sample/clear") -> tuple[str, list[str]]:
+
+def sanitize_pdf(file_path: str, output_dir: str = None) -> tuple[str, list[str]]:
+    if output_dir is None:
+        output_dir = config.DIRECTORIES['sanitized_output']
+
     reader = PdfReader(file_path)
     writer = PdfWriter()
 

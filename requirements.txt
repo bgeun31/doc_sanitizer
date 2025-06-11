@@ -1,15 +1,21 @@
 # 핵심 라이브러리
 oletools>=0.60
 PyPDF2>=3.0.0
-scikit-learn>=1.3.0
+scikit-learn==1.3.0
 pandas>=2.0.0
 numpy>=1.24.0
 requests>=2.31.0
 python-dotenv>=1.0.0
 
+# GUI 라이브러리
+customtkinter>=5.2.0
+
 # 보안 및 압축
 pyzipper>=0.3.6
 reportlab>=4.0.0
+
+# 데이터 불균형 해결
+imbalanced-learn>=0.11.0
 
 # 선택적 라이브러리 (성능 향상)
 matplotlib>=3.7.0
