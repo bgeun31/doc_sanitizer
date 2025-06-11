@@ -170,8 +170,8 @@ def sanitize_pdf(file_path: str, output_dir: str = None) -> tuple[str, list[str]
 
         # 문서의 루트(Root) 객체를 시작점으로 하여 위험 요소 재귀적 제거
         # PyPDF2 4.x.x 버전 이상과의 호환성을 위해 writer._trailer를 사용
-        if "/Root" in writer._trailer:
-            root = writer._trailer["/Root"]
+        root = reader.trailer.get("/Root")
+        if root:
             remove_javascript_recursive(root, removed_keys)
 
         # 무해화된 내용을 새로운 파일로 저장
