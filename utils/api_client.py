@@ -47,11 +47,21 @@ class APIClient:
             return False
         try:
             headers = {'Auth-Key': self.malware_bazaar_key}
-            data = {'query': 'get_info', 'hash': '094fd325049b8a9cf6d3e5ef2a6d4cc6a567d7d49c35f8bb8dd9e3c6acf3d78d'}
+            data = {
+                'query': 'get_info',
+                'hash': '094fd325049b8a9cf6d3e5ef2a6d4cc6a567d7d49c35f8bb8dd9e3c6acf3d78d'
+            }
             response = self.session.post('https://mb-api.abuse.ch/api/v1/', data=data, headers=headers, timeout=10)
-            return response.json().get('query_status') != 'no_api_key'
+            content_type = response.headers.get('Content-Type', '').lower()
+            if 'application/json' in content_type:
+                try:
+                    return response.json().get('query_status') != 'no_api_key'
+                except Exception:
+                    return False
+            return False
         except requests.RequestException:
             return False
+
 
     def test_virustotal_connection(self) -> bool:
         """VirusTotal API 연결을 테스트합니다."""
@@ -76,86 +86,91 @@ class APIClient:
         except requests.RequestException:
             return False
 
-    def _download_sample(self, sha256_hash: str, file_ext: str) -> str:
+    def _download_sample(self, sha256_hash: str, file_ext: str) -> str | None:
         """
-        MalwareBazaar에서 단일 샘플을 다운로드하고 압축을 해제합니다.
-        AES128로 암호화된 ZIP 파일을 처리할 수 있습니다.
-        """
-        if not self.malware_bazaar_key:
-            return None
+        MalwareBazaar에서 단일 샘플을 내려받아 로컬에 저장한다.
 
+        Parameters
+        ----------
+        sha256_hash : str
+            다운로드할 샘플의 SHA-256 해시
+        file_ext : str
+            파일 확장자(“.doc”, “.docm”, “.xlsx” 등)
+
+        Returns
+        -------
+        str | None
+            성공 시 로컬 저장 경로, 실패 시 None
+        """
         import io
-        import pyzipper  # AES 암호화 ZIP 처리를 위한 라이브러리
+        import json
+        import os
         import shutil
 
+        import pyzipper
+
+        url = "https://mb-api.abuse.ch/api/v1/"
+        data = {"query": "get_file", "sha256_hash": sha256_hash}
+        headers = {"API-KEY": self.malware_bazaar_key}
+
         try:
-            headers = {'Auth-Key': self.malware_bazaar_key}
-            data = {'query': 'get_file', 'sha256_hash': sha256_hash}
-            print(f"  -> MB API로 다운로드 요청: {sha256_hash[:16]}...")
-
-            response = self.session.post('https://mb-api.abuse.ch/api/v1/', data=data, timeout=60, headers=headers)
-
-            if response.status_code == 200:
-                if not response.content or len(response.content) < 100:
-                    print(f"  -> [오류] 응답 내용이 비어있거나 너무 작음: {sha256_hash[:16]}...")
-                    return None
-
-                # API가 오류를 JSON으로 반환하는 경우 확인
-                if 'application/json' in response.headers.get('Content-Type', ''):
-                    print(f"  -> [오류] API가 JSON 오류를 반환함: {response.json()}")
-                    return None
-
-                zip_buffer = io.BytesIO(response.content)
-                try:
-                    with pyzipper.AESZipFile(zip_buffer, 'r') as zip_ref:
-                        if not zip_ref.namelist():
-                            print(f"  -> [오류] ZIP 파일이 비어있음: {sha256_hash[:16]}...")
-                            return None
-
-                        # MalwareBazaar 샘플의 표준 압축 비밀번호
-                        pwd = b"infected"
-                        zip_ref.setpassword(pwd)
-
-                        for member_info in zip_ref.infolist():
-                            if not member_info.is_dir():
-                                output_dir = config.DIRECTORIES['malware_samples']
-                                os.makedirs(output_dir, exist_ok=True)
-
-                                final_filename = f"{sha256_hash}{file_ext}"
-                                final_file_path = os.path.join(output_dir, final_filename)
-
-                                # 파일 압축 해제 및 저장
-                                with zip_ref.open(member_info) as source, open(final_file_path, "wb") as target:
-                                    shutil.copyfileobj(source, target)
-
-                                print(f"  -> MB 다운로드 성공: {final_filename}")
-                                return final_file_path
-
-                # ZIP 파일 처리 중 발생할 수 있는 다양한 예외 처리
-                except pyzipper.BadZipFile:
-                    print(f"  -> [오류] 올바른 ZIP 파일이 아님: {sha256_hash[:16]}...")
-                except RuntimeError as e:
-                    if "password" in str(e).lower():
-                        print(f"  -> [오류] ZIP 비밀번호 오류: {sha256_hash[:16]}...")
-                    else:
-                        print(f"  -> [오류] ZIP 압축 해제 실패: {e}")
-                except Exception as e:
-                    print(f"  -> [오류] ZIP 처리 중 알 수 없는 예외: {e}")
-                return None
-            else:
-                print(f"  -> [오류] 다운로드 실패 (HTTP {response.status_code})")
-                try:
-                    print(f"     API 오류: {response.json()}")
-                except json.JSONDecodeError:
-                    print(f"     응답 내용: {response.text[:200]}")
-                return None
-        except requests.exceptions.Timeout:
-            print(f"  -> [오류] 다운로드 타임아웃: {sha256_hash[:16]}...")
-        except requests.exceptions.RequestException as e:
-            print(f"  -> [오류] 네트워크 오류: {e}")
+            response = self.session.post(url, data=data, headers=headers, timeout=60)
         except Exception as e:
-            print(f"  -> [오류] 알 수 없는 오류: {e}")
+            print(f"  -> [오류] HTTP 요청 실패: {e}")
+            return None
+
+        # ---- 성공적인 HTTP 응답 처리 ----
+        if response.status_code == 200:
+            # 1) 크기가 비정상적으로 작으면 오류로 간주
+            if len(response.content) < 100:
+                print("  -> [오류] 응답이 비정상적으로 작음")
+                return None
+
+            # 2) ZIP 시그니처 우선 판별
+            is_zip = response.content.startswith(b"PK\x03\x04")
+
+            # 3) 헤더는 JSON, 내용은 ZIP일 수도 있음
+            if not is_zip and "json" in response.headers.get("Content-Type", "").lower():
+                try:
+                    err_json = response.json()
+                    print(f"  -> [오류] MalwareBazaar 오류 응답: {err_json}")
+                    return None
+                except json.JSONDecodeError:
+                    # 헤더가 잘못 표기된 경우 → 계속 진행
+                    pass
+            elif not is_zip:
+                # ZIP도 JSON도 아닌 경우
+                print("  -> [오류] 예상치 못한 응답 형식")
+                return None
+
+            # 4) 실제 ZIP 해제
+            try:
+                zip_buffer = io.BytesIO(response.content)
+                with pyzipper.AESZipFile(zip_buffer) as zf:
+                    zf.setpassword(b"infected")
+                    for info in zf.infolist():
+                        if info.is_dir():
+                            continue
+                        out_dir = config.DIRECTORIES["malware_samples"]
+                        os.makedirs(out_dir, exist_ok=True)
+                        out_path = os.path.join(out_dir, f"{sha256_hash}{file_ext}")
+                        with zf.open(info) as src, open(out_path, "wb") as dst:
+                            shutil.copyfileobj(src, dst)
+                        print(f"  -> MB 다운로드 성공: {os.path.basename(out_path)}")
+                        return out_path
+            except Exception as e:
+                print(f"  -> [오류] ZIP 해제 실패: {e}")
+        else:
+            # ---- HTTP 오류 응답 처리 ----
+            try:
+                print("  -> [오류] API 응답:", response.json())
+            except json.JSONDecodeError:
+                print("  -> [오류] API 응답(비 JSON):", response.text[:200])
+
         return None
+
+
+
 
     def collect_malware_samples_malware_bazaar(self, count: int = 150) -> List[str]:
         """MalwareBazaar에서 문서 관련 악성 샘플을 수집합니다."""
@@ -178,28 +193,59 @@ class APIClient:
                 data = {'query': 'get_taginfo', 'tag': tag, 'limit': 100}
                 response = self.session.post('https://mb-api.abuse.ch/api/v1/', data=data, headers=headers, timeout=30)
 
-                if response.status_code == 200 and response.json().get('query_status') == 'ok':
-                    for sample in response.json().get('data', []):
-                        if len(collected_files) >= count:
-                            break
-                        # 문서 파일 타입인지 MIME 타입으로 확인
-                        if 'document' in sample.get('file_type_mime', ''):
-                            sha256_hash = sample.get('sha256_hash')
-                            file_ext = f".{sample.get('file_type')}" if sample.get('file_type') else ".bin"
-                            file_path = self._download_sample(sha256_hash, file_ext)
-                            if file_path:
-                                collected_files.append(file_path)
-                                self._save_sample_metadata(
-                                    file_path, sha256_hash, True, 'malware_bazaar',
-                                    sample.get('signature'), 'malware'
-                                )
-                time.sleep(5)  # API 요청 간격 조절
+                if response.status_code == 200:
+                    content_type = response.headers.get('Content-Type', '').lower()
+                    if 'application/json' in content_type:
+                        try:
+                            res_json = response.json()
+                        except Exception as e:
+                            print(f"  -> [오류] JSON 파싱 실패: {e}")
+                            print(f"     응답 본문 일부: {response.text[:200]!r}")
+                            continue
+
+        # 이후 res_json 사용...
+                        if res_json.get('query_status') == 'ok':
+                            for sample in res_json.get('data', []):
+                                if len(collected_files) >= count:
+                                    break
+                                if 'document' in sample.get('file_type_mime', ''):
+                                    sha256_hash = sample.get('sha256_hash')
+                                    file_ext = f".{sample.get('file_type')}" if sample.get('file_type') else ".bin"
+                                    file_path = self._download_sample(sha256_hash, file_ext)
+                                    if file_path:
+                                        collected_files.append(file_path)
+                                        self._save_sample_metadata(
+                                            file_path, sha256_hash, True, 'malware_bazaar',
+                                            sample.get('signature'), 'malware'
+                                        )
+                        else:
+                            print(f"  -> [오류] query_status != ok: {res_json.get('query_status')}")
+                    else:
+                        print(f"  -> [오류] 예상치 못한 Content-Type: {content_type}")
+                        print(f"     응답 내용 일부: {response.text[:200]!r}")
+                else:
+                    print(f"  -> [오류] HTTP {response.status_code}")
+                    content_type = response.headers.get('Content-Type', '').lower()
+                    if 'application/json' in content_type:
+                        try:
+                            print(f"     응답 내용: {response.json()}")
+                        except Exception as e:
+                            print(f"     JSON 파싱 실패: {e}")
+                            print(f"     응답 텍스트: {response.text[:200]!r}")
+                    else:
+                        print(f"     Content-Type: {content_type}")
+                        print(f"     응답 텍스트: {response.text[:200]!r}")
+
+                time.sleep(5)
+
             except Exception as e:
                 print(f"[MB] '{tag}' 태그 수집 중 오류: {e}")
-                time.sleep(15)  # 오류 발생 시 대기 시간 증가
+                time.sleep(15)
                 continue
+
         print(f"[MB] 총 {len(collected_files)}개 악성 샘플 수집 완료")
         return collected_files
+
 
     def collect_malware_samples_triage(self, count: int = 100) -> List[str]:
         """Tria.ge에서 문서 관련 악성 샘플을 수집합니다."""
