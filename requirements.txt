@@ -35,3 +35,9 @@ pymysql>=1.1                # MySQL 연결
 # 웹 서버
 uvicorn                     # ASGI 서버
 fastapi                     # 웹 API 프레임워크
+
+# 서버
+uvicorn
+fastapi
+
+# 메인서버 A작업
